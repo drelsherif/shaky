@@ -1,0 +1,2 @@
+Permissions-Policy: accelerometer=*, gyroscope=*
+  Feature-Policy: accelerometer 'self'; gyroscope 'self'
