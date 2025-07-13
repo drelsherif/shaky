@@ -12,35 +12,35 @@ const HandMovementAssessment = () => {
     magnitude: 0,
     frequency: 0
   });
-  const [tremorHistory, setTremorHistory] = useState([]);
+  const [tremorHistory, setTremorHistory] = useState([]); // For real-time visualization
   const [leftHandData, setLeftHandData] = useState(null);
   const [rightHandData, setRightHandData] = useState(null);
   const [permissionGranted, setPermissionGranted] = useState(false);
-  const [testTimer, setTestTimer] = useState(10);
+  const [testTimer, setTestTimer] = useState(10); // Standard 10-second test duration
   const [isIOSDevice, setIsIOSDevice] = useState(false);
   const intervalRef = useRef(null);
-  const tremorDataRef = useRef([]); // This ref will hold all collected tremor data
+  const tremorDataRef = useRef([]); // This ref collects all sensor data for analysis
 
-  // Phase navigation
+  // Define the sequence of test phases
   const phases = [
     'intro', 'left-tap', 'left-tremor', 'left-results',
     'right-tap', 'right-tremor', 'right-results', 'final-results'
   ];
 
-  // Detect iOS device
+  // Detect iOS device on component mount for permission handling
   useEffect(() => {
     const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
     setIsIOSDevice(iOS);
   }, []);
 
-  // Real sensor data handling
+  // Handle DeviceMotionEvent for sensor data
   const handleMotionEvent = (event) => {
     const accel = event.accelerationIncludingGravity || { x: 0, y: 0, z: 0 };
     const rotationRate = event.rotationRate || { alpha: 0, beta: 0, gamma: 0 };
 
     const magnitude = Math.sqrt(accel.x ** 2 + accel.y ** 2 + accel.z ** 2);
 
-    // Simple low-pass filter to smooth out sensor data
+    // Apply a simple low-pass filter to smooth acceleration data
     const filteredAccel = {
       x: accel.x * 0.8 + sensorData.acceleration.x * 0.2,
       y: accel.y * 0.8 + sensorData.acceleration.y * 0.2,
@@ -58,33 +58,30 @@ const HandMovementAssessment = () => {
       timestamp: Date.now()
     };
 
-    setSensorData(newSensorData);
+    setSensorData(newSensorData); // Update live sensor data display
 
     if (isTestRunning && currentPhase.includes('tremor')) {
-      // Only record tremor data if the test is running and it's a tremor phase
-      tremorDataRef.current.push({
-        ...newSensorData,
-        // Calculate relative time within the 10-second test window for consistency
-        time: (10 - testTimer) * 1000 + (Date.now() % 1000) // This time calculation needs to be relative to test start
+      // Collect data into the ref for batch analysis at the end of the test
+      tremorDataRef.current.push(newSensorData);
+      // Update tremorHistory state for real-time visualization (only keeps a recent window)
+      setTremorHistory(prev => {
+        const updatedHistory = [...prev, newSensorData];
+        return updatedHistory.slice(Math.max(updatedHistory.length - 200, 0)); // Keep last 200 points for performance
       });
-
-      // Keep tremorHistory state updated for visualization, but tremorDataRef is the source for analysis
-      setTremorHistory([...tremorDataRef.current]);
     }
   };
 
-  // Tremor frequency analysis (using peak detection for simplicity)
-  const analyzeTremorFrequency = (tremorData) => {
-    if (tremorData.length < 50) return 0; // Need a reasonable number of points for frequency analysis
+  // Analyze tremor frequency using peak detection
+  const analyzeTremorFrequency = (data) => {
+    if (data.length < 100) return 0; // Requires sufficient data points for meaningful analysis
 
-    const magnitudes = tremorData.map(d => d.magnitude);
+    const magnitudes = data.map(d => d.magnitude);
     let peakCount = 0;
     let lastPeakIndex = -1;
-    const minPeakDistance = 5; // Minimum data points between peaks to consider them distinct
+    const minPeakDistance = 10; // Minimum data points between peaks (adjust based on sensor rate)
 
     for (let i = 1; i < magnitudes.length - 1; i++) {
-      // Check for a local maximum
-      if (magnitudes[i] > magnitudes[i - 1] && magnitudes[i] > magnitudes[i + 1]) {
+      if (magnitudes[i] > magnitudes[i - 1] && magnitudes[i] > magnitudes[i + 1]) { // Local maximum
         if (lastPeakIndex === -1 || (i - lastPeakIndex) > minPeakDistance) {
           peakCount++;
           lastPeakIndex = i;
@@ -92,45 +89,36 @@ const HandMovementAssessment = () => {
       }
     }
 
-    const startTime = tremorData[0].timestamp;
-    const endTime = tremorData[tremorData.length - 1].timestamp;
-    const timeSpanSeconds = (endTime - startTime) / 1000; // Convert to seconds
-
-    return timeSpanSeconds > 0 ? (peakCount / timeSpanSeconds) : 0;
+    const durationSeconds = (data[data.length - 1].timestamp - data[0].timestamp) / 1000;
+    return durationSeconds > 0 ? peakCount / durationSeconds : 0;
   };
 
-
-  // Clinical analysis
+  // Perform clinical analysis of hand movement data
   const analyzeHandData = (tapCount, elapsedTime, tremorData, handType) => {
-    console.log('Analyzing hand data:', { tapCount, elapsedTime, tremorDataPoints: tremorData.length, handType });
+    console.log(`Analyzing ${handType} hand data:`, { tapCount, elapsedTime, tremorDataPoints: tremorData.length });
 
-    const actualElapsedTime = Math.max(1, elapsedTime); // Ensure minimum 1 second to avoid division by zero
+    const actualElapsedTime = Math.max(1, elapsedTime); // Ensure at least 1 second for calculation
+
+    // Tapping Frequency
     const frequency = tapCount / actualElapsedTime;
 
-    console.log('Calculated tapping frequency:', frequency);
-
+    // Tremor Analysis
     const tremorFrequency = analyzeTremorFrequency(tremorData);
     const tremorAmplitude = tremorData.length > 0 ?
       tremorData.reduce((sum, d) => sum + d.magnitude, 0) / tremorData.length : 0;
 
-    console.log('Tremor analysis:', { tremorFrequency, tremorAmplitude });
-
-    // Improved gyroscope stability analysis
-    // Measures how much the device is rotating. Lower values (closer to 0) mean more stable.
-    const gyroSumOfAbsRotations = tremorData.reduce((sum, d) =>
+    // Gyroscope Stability (inverse of average absolute rotation)
+    const gyroRotationSum = tremorData.reduce((sum, d) =>
       sum + (Math.abs(d.gyroscope.alpha || 0) + Math.abs(d.gyroscope.beta || 0) + Math.abs(d.gyroscope.gamma || 0))
     , 0);
+    const averageGyroRotation = tremorData.length > 0 ? gyroRotationSum / tremorData.length : 0;
+    const gyroStability = Math.max(0, 100 - (averageGyroRotation * 2)); // Scale to 0-100, adjust '2' for sensitivity
 
-    const averageGyroRotation = tremorData.length > 0 ? gyroSumOfAbsRotations / tremorData.length : 0;
-    // Map average rotation to a 0-100 stability score. Adjust divisor for sensitivity.
-    const gyroStability = Math.max(0, 100 - (averageGyroRotation * 2)); // Multiplying by 2 to scale it. Adjust as needed.
-
-    // Calculate rhythmicity based on tap frequency (closer to 5 Hz is generally considered good)
+    // Rhythmicity (how close tapping frequency is to an ideal, e.g., 5 Hz)
     const rhythmicity = frequency > 0 ? Math.max(0, 100 - (Math.abs(frequency - 5) * 15)) : 0;
-    const spatialConsistency = Math.max(0, gyroStability); // Using gyro stability for spatial consistency in this context
+    const spatialConsistency = gyroStability; // Using gyro stability as a proxy for spatial consistency
 
-    console.log('Calculated metrics:', { rhythmicity, spatialConsistency, gyroStability });
-
+    // Score Categorization
     const getScoreCategory = (score) => {
       if (score >= 90) return { category: 'Excellent', color: 'text-green-600' };
       if (score >= 75) return { category: 'Good', color: 'text-blue-600' };
@@ -138,35 +126,34 @@ const HandMovementAssessment = () => {
       return { category: 'Poor', color: 'text-red-600' };
     };
 
-    // Improved overall score calculation - weighted average of key metrics
-    const frequencyScore = Math.min(100, frequency * 20); // Scale frequency, cap at 100
-    const tremorFrequencyScore = Math.max(0, 100 - (Math.abs(tremorFrequency - 0) * 10)); // Lower tremor freq is better
-    const tremorAmplitudeScore = Math.max(0, 100 - (tremorAmplitude * 200)); // Lower tremor amplitude is better
+    // Overall Score Calculation (weighted average)
+    const frequencyScore = Math.min(100, frequency * 20); // Scale tapping frequency to score
+    const tremorQualityScore = Math.max(0, 100 - (tremorFrequency * 5) - (tremorAmplitude * 100)); // Lower tremor is better
 
     const overallScore = Math.min(100, Math.max(0,
-      (frequencyScore * 0.3) + // Tapping speed
-      (rhythmicity * 0.2) +    // Tapping consistency
-      (gyroStability * 0.3) +  // Hand steadiness / Tremor stability
-      (tremorFrequencyScore * 0.1) + // Low tremor frequency is good
-      (tremorAmplitudeScore * 0.1)   // Low tremor amplitude is good
+      (frequencyScore * 0.4) +
+      (rhythmicity * 0.2) +
+      (gyroStability * 0.3) +
+      (tremorQualityScore * 0.1)
     ));
 
     const category = getScoreCategory(overallScore);
 
-    // Clinical interpretation based on tremor frequency and tapping rate
-    let clinicalInterpretation = 'Normal motor function';
-    if (frequency < 1) {
-      clinicalInterpretation = 'Severe bradykinesia detected - significantly reduced movement speed. Consider neurological assessment.';
-    } else if (frequency < 3) {
-      clinicalInterpretation = 'Bradykinesia detected - reduced movement speed. Suggests mild to moderate motor slowness.';
-    } else if (tremorFrequency > 8 && tremorAmplitude < 0.25) {
-      clinicalInterpretation = 'Physiological tremor detected - within normal range, usually not clinically significant.';
-    } else if (tremorFrequency > 0 && tremorFrequency < 6 && tremorAmplitude > 0.25) {
-      clinicalInterpretation = 'Possible pathological tremor (e.g., resting or essential tremor characteristics). Consult physician for further evaluation.';
-    } else if (frequency >= 3 && frequency <= 8 && tremorAmplitude < 0.25) {
-      clinicalInterpretation = 'Normal motor function, good tapping rate and minimal tremor detected.';
+    // Clinical Interpretation based on calculated metrics
+    let clinicalInterpretation = 'Normal motor function, no significant anomalies detected.';
+    if (frequency < 3) {
+      clinicalInterpretation = 'Bradykinesia detected (reduced movement speed). May indicate motor slowness. ';
+      if (frequency < 1) clinicalInterpretation = 'Severe bradykinesia detected - significantly reduced movement speed. ';
+    }
+    if (tremorFrequency > 0 && tremorFrequency < 6 && tremorAmplitude > 0.25) {
+      clinicalInterpretation += 'Possible pathological tremor (e.g., essential or resting tremor characteristics). Further clinical evaluation advised.';
+    } else if (tremorFrequency >= 6 && tremorFrequency <= 12 && tremorAmplitude <= 0.25) {
+      clinicalInterpretation += 'Physiological tremor detected, within normal limits and generally not concerning.';
     } else if (tremorAmplitude > 0.5) {
-      clinicalInterpretation = 'Significant tremor amplitude detected. Further clinical assessment recommended.';
+      clinicalInterpretation += 'Significant tremor amplitude detected. Highly recommend a physician consultation.';
+    }
+    if (gyroStability < 60) {
+      clinicalInterpretation += ' Reduced hand stability observed, which could be related to motor control issues or tremor.';
     }
 
     const results = {
@@ -180,66 +167,63 @@ const HandMovementAssessment = () => {
       category: category.category,
       categoryColor: category.color,
       clinicalInterpretation,
-      tremorData: [...tremorData] // Store a copy of the tremor data for results display/debugging
+      tremorData: [...tremorData] // Store a copy for review in results
     };
 
-    console.log('Final analysis results for hand:', handType, results);
+    console.log('Final computed results:', results);
     return results;
   };
 
-  // Request sensor permissions
+  // Request motion sensor permissions (especially for iOS)
   const requestSensorPermissions = async () => {
     try {
-      let permissionGranted = false;
-
+      let granted = false;
       if (isIOSDevice && typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
         const permission = await DeviceMotionEvent.requestPermission();
-        permissionGranted = permission === 'granted';
-
-        if (permissionGranted) {
-          window.addEventListener('devicemotion', handleMotionEvent, true);
-        }
+        granted = permission === 'granted';
       } else {
-        permissionGranted = true;
-        window.addEventListener('devicemotion', handleMotionEvent, true);
+        granted = true; // Non-iOS devices typically grant access by default
       }
 
-      setPermissionGranted(permissionGranted);
+      setPermissionGranted(granted);
 
-      if (permissionGranted) {
-        setTimeout(() => {
-          nextPhase(); // Automatically proceed to the next phase if permission is granted
-        }, 1000);
+      if (granted) {
+        window.addEventListener('devicemotion', handleMotionEvent, true);
+        setTimeout(nextPhase, 1000); // Proceed after a short delay
+      } else {
+        alert('Sensor access denied. The app will use simulated data for demonstration, which may limit accuracy.');
+        setPermissionGranted(true); // Allow proceeding in demonstration mode
+        setTimeout(nextPhase, 1000);
       }
     } catch (error) {
-      console.error('Permission denied:', error);
-      alert('Sensor access denied. The app will use simulated data for demonstration.');
-      setPermissionGranted(true); // Allow continuing with a warning
-      setTimeout(() => {
-        nextPhase();
-      }, 1000);
+      console.error('Permission request failed:', error);
+      alert('Could not request sensor access. Please ensure your device supports motion sensors.');
+      setPermissionGranted(true); // Allow proceeding
+      setTimeout(nextPhase, 1000);
     }
   };
 
+  // Start the 10-second test timer and measurement
   const startTest = () => {
     setIsTestRunning(true);
     setTestProgress(0);
-    setTapCount(0);
-    setTestTimer(10);
-    tremorDataRef.current = []; // Clear previous tremor data for a new test
-    setTremorHistory([]); // Clear for UI as well
+    // Reset tapCount and tremorDataRef only when starting a new test, not on phase change
+    if (currentPhase.includes('tap')) setTapCount(0);
+    if (currentPhase.includes('tremor')) {
+      tremorDataRef.current = [];
+      setTremorHistory([]);
+    }
+    setTestTimer(10); // Always start from 10 seconds
 
-    console.log(`Starting ${currentPhase} test`);
-
-    // Reset and start the timer
     intervalRef.current = setInterval(() => {
       setTestTimer(prev => {
         const newTimer = prev - 1;
-        setTestProgress((10 - newTimer) * 10);
+        setTestProgress(((10 - newTimer) / 10) * 100); // Progress from 0% to 100%
 
         if (newTimer <= 0) {
-          console.log('Timer reached 0, stopping test');
-          stopTest();
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+          stopTest(); // Call stopTest when timer finishes
           return 0;
         }
         return newTimer;
@@ -247,169 +231,64 @@ const HandMovementAssessment = () => {
     }, 1000);
   };
 
+  // Stop the current test, analyze data, and save results
   const stopTest = () => {
-    console.log('Stopping test - Current phase:', currentPhase);
-    console.log('Final tap count:', tapCount);
-    console.log('Collected tremor data points:', tremorDataRef.current.length);
-
-    setIsTestRunning(false);
+    setIsTestRunning(false); // Stop recording
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
 
-    // Calculate elapsed time from the beginning of the 10-second test
-    const elapsedTime = 10 - testTimer; // Test duration is fixed at 10 seconds
+    const elapsedTime = 10; // Test duration is fixed at 10 seconds
 
-    // Ensure we pass the correct and complete data for analysis
-    const dataToAnalyze = currentPhase.includes('tremor') ? tremorDataRef.current : [];
-
-    const results = analyzeHandData(tapCount, elapsedTime, dataToAnalyze, currentPhase.includes('left') ? 'left' : 'right');
-    console.log('Analysis results from stopTest:', results);
+    let results;
+    if (currentPhase.includes('tap')) {
+      results = analyzeHandData(tapCount, elapsedTime, [], currentPhase.includes('left') ? 'left' : 'right');
+    } else if (currentPhase.includes('tremor')) {
+      results = analyzeHandData(0, elapsedTime, tremorDataRef.current, currentPhase.includes('left') ? 'left' : 'right');
+    }
 
     if (currentPhase.includes('left')) {
       setLeftHandData(results);
-      console.log('Left hand data saved:', results);
     } else {
       setRightHandData(results);
-      console.log('Right hand data saved:', results);
     }
 
-    // Reset timer and progress for the next phase, but after results are saved
-    setTimeout(() => {
-      setTestTimer(10);
-      setTestProgress(0);
-      nextPhase(); // Automatically move to the next phase after analysis
-    }, 1000); // Give a moment for state updates and console logs
+    console.log(`Test for ${currentPhase} completed. Results saved.`);
+    // Do NOT call nextPhase here. Let the UI button handle progression.
   };
 
+  // Handle tap event for tapping test
   const handleTap = () => {
-    if (isTestRunning && currentPhase.includes('tap')) { // Only count taps during tapping test
+    if (isTestRunning && currentPhase.includes('tap')) {
       setTapCount(prev => prev + 1);
     }
   };
 
-  const nextPhase = () => {
+  // Progress to the next phase in the sequence
+  const goToNextPhase = () => {
     const currentIndex = phases.indexOf(currentPhase);
     if (currentIndex < phases.length - 1) {
       setCurrentPhase(phases[currentIndex + 1]);
-      // Reset states for the new phase
+      // Reset states for the NEXT phase's start
       setTestProgress(0);
       setTapCount(0);
       setTestTimer(10);
-      tremorDataRef.current = []; // Clear ref for new test
-      setTremorHistory([]); // Clear history for new test UI
+      tremorDataRef.current = [];
+      setTremorHistory([]);
+      setIsTestRunning(false); // Ensure not running at the start of new phase
     }
   };
 
-  // 3D Tremor Visualization Component
-  const TremorVisualization = ({ tremorData }) => {
-    const canvasRef = useRef(null);
+  // Cleanup effect for event listeners and intervals
+  useEffect(() => {
+    return () => {
+      window.removeEventListener('devicemotion', handleMotionEvent);
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, []);
 
-    useEffect(() => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-
-      // Set canvas size for high DPI screens
-      const rect = canvas.getBoundingClientRect();
-      canvas.width = rect.width * window.devicePixelRatio;
-      canvas.height = rect.height * window.devicePixelRatio;
-      ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-
-      const width = rect.width;
-      const height = rect.height;
-
-      // Clear canvas
-      ctx.clearRect(0, 0, width, height);
-
-      // Draw background
-      ctx.fillStyle = '#1f2937'; // Dark gray background
-      ctx.fillRect(0, 0, width, height);
-
-      // Draw axes
-      ctx.strokeStyle = '#6b7280'; // Gray for axes
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      // X axis (time/data points)
-      ctx.moveTo(50, height - 50);
-      ctx.lineTo(width - 50, height - 50);
-      // Y axis (magnitude/rotation)
-      ctx.moveTo(50, 50);
-      ctx.lineTo(50, height - 50);
-      ctx.stroke();
-
-      // Draw tremor data if available
-      if (tremorData && tremorData.length > 1) {
-        const maxMagnitude = Math.max(...tremorData.map(d => d.magnitude), 1); // Ensure min 1 to avoid division by zero
-        const maxGyro = Math.max(...tremorData.map(d => Math.max(Math.abs(d.gyroscope.alpha), Math.abs(d.gyroscope.beta), Math.abs(d.gyroscope.gamma))), 1);
-
-        const scaleX = (width - 100) / Math.max(1, tremorData.length - 1);
-        // Scale Y to fit data within the graph, leaving some padding
-        const scaleYMagnitude = (height - 100) / (maxMagnitude * 1.2); // 1.2 for some padding above max
-        const scaleYGyro = (height - 100) / (maxGyro * 1.2);
-
-        // Draw acceleration magnitude (blue line)
-        ctx.strokeStyle = '#3b82f6'; // Blue
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        tremorData.forEach((data, index) => {
-          const x = 50 + index * scaleX;
-          // Invert Y-axis for drawing on canvas (0,0 is top-left)
-          const y = height - 50 - (data.magnitude * scaleYMagnitude);
-          if (index === 0) {
-            ctx.moveTo(x, y);
-          } else {
-            ctx.lineTo(x, y);
-          }
-        });
-        ctx.stroke();
-
-        // Draw gyroscope alpha (red line)
-        ctx.strokeStyle = '#ef4444'; // Red
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        tremorData.forEach((data, index) => {
-          const x = 50 + index * scaleX;
-          // Draw absolute value of alpha for visual consistency of rotation
-          const y = height - 50 - ((Math.abs(data.gyroscope.alpha || 0)) * scaleYGyro);
-          if (index === 0) {
-            ctx.moveTo(x, y);
-          } else {
-            ctx.lineTo(x, y);
-          }
-        });
-        ctx.stroke();
-      }
-
-      // Draw labels
-      ctx.fillStyle = '#9ca3af'; // Light gray for text
-      ctx.font = '12px sans-serif';
-      ctx.fillText('Acceleration (m/s²)', 10, 20);
-      ctx.fillText('Rotation (deg/s)', 10, 35);
-
-      // Draw legend
-      ctx.fillStyle = '#3b82f6';
-      ctx.fillRect(160, 10, 20, 3); // Blue line for Accel
-      ctx.fillStyle = '#ef4444';
-      ctx.fillRect(160, 25, 20, 3); // Red line for Gyro
-      ctx.fillText('Magnitude', 185, 13);
-      ctx.fillText('Alpha', 185, 28);
-
-    }, [tremorData]); // Redraw when tremorData changes
-
-    return (
-      <div className="w-full">
-        <canvas
-          ref={canvasRef}
-          className="w-full h-48 border border-gray-300 rounded-lg bg-gray-900"
-          style={{ maxWidth: '100%', height: '200px' }}
-        />
-      </div>
-    );
-  };
+  // --- Render Functions for Each Phase ---
 
   const renderIntroduction = () => (
     <div className="max-w-2xl mx-auto p-8 bg-white rounded-lg shadow-lg">
@@ -506,9 +385,9 @@ const HandMovementAssessment = () => {
       <div className="text-center mb-8">
         <div className="text-8xl font-bold text-blue-600 mb-4">{tapCount}</div>
         <div className="text-xl text-gray-600 mb-2">Taps</div>
-        {isTestRunning && testTimer < 10 && (
+        {isTestRunning && (
           <div className="mt-4 text-2xl text-blue-600 font-semibold">
-            Rate: {(tapCount / (10 - testTimer)).toFixed(1)} Hz
+            Rate: {(tapCount / Math.max(1, (10 - testTimer))).toFixed(1)} Hz
           </div>
         )}
       </div>
@@ -516,8 +395,7 @@ const HandMovementAssessment = () => {
       <div className="flex justify-center mb-12">
         <button
           onClick={handleTap}
-          // Disabled if test is not running OR if timer has already started (i.e., not initial state)
-          disabled={!isTestRunning && testTimer !== 10}
+          disabled={!isTestRunning} // Only disable if test is not running
           className={`w-80 h-80 rounded-full text-4xl font-bold transition-all duration-150 ${
             isTestRunning
               ? 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white shadow-2xl transform hover:scale-105 active:scale-95'
@@ -535,7 +413,7 @@ const HandMovementAssessment = () => {
       </div>
 
       <div className="text-center space-y-6">
-        {!isTestRunning && testTimer === 10 && (
+        {!isTestRunning && testTimer === 10 && ( // Test not started yet
           <button
             onClick={startTest}
             className="bg-green-600 hover:bg-green-700 active:bg-green-800 text-white px-12 py-6 rounded-xl text-xl font-semibold transition-colors shadow-lg"
@@ -546,9 +424,9 @@ const HandMovementAssessment = () => {
           </button>
         )}
 
-        {testTimer === 0 && ( // Test finished
+        {!isTestRunning && testTimer === 0 && ( // Test finished
           <button
-            onClick={nextPhase} // This will be handled by stopTest's setTimeout for proper flow
+            onClick={goToNextPhase}
             className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white px-12 py-6 rounded-xl text-xl font-semibold transition-colors shadow-lg"
             style={{ touchAction: 'manipulation' }}
           >
@@ -634,7 +512,7 @@ const HandMovementAssessment = () => {
       </div>
 
       <div className="text-center space-y-6">
-        {!isTestRunning && testTimer === 10 && (
+        {!isTestRunning && testTimer === 10 && ( // Test not started yet
           <button
             onClick={startTest}
             className="bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white px-12 py-6 rounded-xl text-xl font-semibold transition-colors shadow-lg"
@@ -645,9 +523,9 @@ const HandMovementAssessment = () => {
           </button>
         )}
 
-        {testTimer === 0 && ( // Test finished
+        {!isTestRunning && testTimer === 0 && ( // Test finished
           <button
-            onClick={nextPhase} // This will be handled by stopTest's setTimeout for proper flow
+            onClick={goToNextPhase}
             className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white px-12 py-6 rounded-xl text-xl font-semibold transition-colors shadow-lg"
             style={{ touchAction: 'manipulation' }}
           >
@@ -666,7 +544,7 @@ const HandMovementAssessment = () => {
         <p className="text-gray-600">Comprehensive sensor-based analysis</p>
       </div>
 
-      {data ? ( // Conditional render based on data existence
+      {data ? (
         <div className="space-y-6">
           <div className="bg-gray-50 p-4 rounded-lg">
             <h3 className="font-semibold text-gray-800 mb-3">Clinical Assessment</h3>
@@ -765,7 +643,7 @@ const HandMovementAssessment = () => {
 
       <div className="text-center mt-6">
         <button
-          onClick={nextPhase}
+          onClick={goToNextPhase}
           className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-semibold transition-colors"
         >
           {currentPhase === 'left-results' ? 'Test Right Hand' : 'View Final Results'}
@@ -778,9 +656,8 @@ const HandMovementAssessment = () => {
     const dominantHand = leftHandData && rightHandData ?
       (leftHandData.overallScore > rightHandData.overallScore ? 'Left' : 'Right') : 'Unknown';
 
-    // Confidence score based on the absolute difference in overall scores
     const confidenceScore = leftHandData && rightHandData ?
-      (100 - Math.min(100, Math.abs(leftHandData.overallScore - rightHandData.overallScore) * 2)).toFixed(1) : 'N/A'; // Scale difference to a 0-100 score
+      (100 - Math.min(100, Math.abs(leftHandData.overallScore - rightHandData.overallScore) * 2)).toFixed(1) : 'N/A';
 
     return (
       <div className="max-w-5xl mx-auto p-6 bg-white rounded-lg shadow-lg">
@@ -972,7 +849,7 @@ const HandMovementAssessment = () => {
               setTestTimer(10);
               tremorDataRef.current = [];
               setTremorHistory([]);
-              setPermissionGranted(false); // Reset permission on new assessment
+              setPermissionGranted(false); // Reset permission for a full restart
             }}
             className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-semibold transition-colors"
           >
@@ -983,38 +860,7 @@ const HandMovementAssessment = () => {
     );
   };
 
-  // Cleanup sensor listeners on unmount
-  useEffect(() => {
-    return () => {
-      window.removeEventListener('devicemotion', handleMotionEvent);
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, []);
-
-  // Render current phase
-  const renderCurrentPhase = () => {
-    switch (currentPhase) {
-      case 'intro':
-        return renderIntroduction();
-      case 'left-tap':
-        return renderTappingTest('Left');
-      case 'left-tremor':
-        return renderTremorTest('Left');
-      case 'left-results':
-        return renderHandResults('Left', leftHandData);
-      case 'right-tap':
-        return renderTappingTest('Right');
-      case 'right-tremor':
-        return renderTremorTest('Right');
-      case 'right-results':
-        return renderHandResults('Right', rightHandData);
-      case 'final-results':
-        return renderFinalResults();
-      default:
-        return renderIntroduction();
-    }
-  };
-
+  // Main render function for the component
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 py-4 px-4">
       <div className="container mx-auto">
@@ -1033,7 +879,29 @@ const HandMovementAssessment = () => {
           </div>
         </div>
 
-        {renderCurrentPhase()}
+        {/* Render the current phase based on state */}
+        {(() => {
+          switch (currentPhase) {
+            case 'intro':
+              return renderIntroduction();
+            case 'left-tap':
+              return renderTappingTest('Left');
+            case 'left-tremor':
+              return renderTremorTest('Left');
+            case 'left-results':
+              return renderHandResults('Left', leftHandData);
+            case 'right-tap':
+              return renderTappingTest('Right');
+            case 'right-tremor':
+              return renderTremorTest('Right');
+            case 'right-results':
+              return renderHandResults('Right', rightHandData);
+            case 'final-results':
+              return renderFinalResults();
+            default:
+              return renderIntroduction();
+          }
+        })()}
       </div>
     </div>
   );
