@@ -201,14 +201,23 @@ const HandMovementAssessment = () => {
 
   const stopTest = () => {
     setIsTestRunning(false);
-    if (intervalRef.current) clearInterval(intervalRef.current);
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
     
-    const elapsedTime = 10 - testTimer;
+    // Calculate elapsed time properly
+    const elapsedTime = Math.max(1, 10 - testTimer); // Ensure minimum 1 second
+    console.log('Test stopped. Taps:', tapCount, 'Elapsed time:', elapsedTime, 'Tremor data points:', tremorDataRef.current.length);
+    
     const results = analyzeHandData(tapCount, elapsedTime, tremorDataRef.current, currentPhase.includes('left') ? 'left' : 'right');
+    
     if (currentPhase.includes('left')) {
       setLeftHandData(results);
+      console.log('Left hand data saved:', results);
     } else {
       setRightHandData(results);
+      console.log('Right hand data saved:', results);
     }
   };
 
@@ -236,35 +245,51 @@ const HandMovementAssessment = () => {
     
     useEffect(() => {
       const canvas = canvasRef.current;
-      if (!canvas || tremorData.length === 0) return;
+      if (!canvas) return;
       
       const ctx = canvas.getContext('2d');
-      const width = canvas.width;
-      const height = canvas.height;
+      if (!ctx) return;
       
+      // Set canvas size
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * window.devicePixelRatio;
+      canvas.height = rect.height * window.devicePixelRatio;
+      ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+      
+      const width = rect.width;
+      const height = rect.height;
+      
+      // Clear canvas
       ctx.clearRect(0, 0, width, height);
+      
+      // Draw background
       ctx.fillStyle = '#1f2937';
       ctx.fillRect(0, 0, width, height);
       
+      // Draw axes
       ctx.strokeStyle = '#6b7280';
       ctx.lineWidth = 1;
       ctx.beginPath();
+      // X axis
       ctx.moveTo(50, height - 50);
       ctx.lineTo(width - 50, height - 50);
+      // Y axis
       ctx.moveTo(50, 50);
       ctx.lineTo(50, height - 50);
       ctx.stroke();
       
-      if (tremorData.length > 1) {
+      // Draw tremor data if available
+      if (tremorData && tremorData.length > 1) {
         const scaleX = (width - 100) / Math.max(1, tremorData.length - 1);
-        const scaleY = (height - 100) / 2;
+        const scaleY = (height - 100) / 4;
         
+        // Draw acceleration magnitude (blue line)
         ctx.strokeStyle = '#3b82f6';
         ctx.lineWidth = 2;
         ctx.beginPath();
         tremorData.forEach((data, index) => {
           const x = 50 + index * scaleX;
-          const y = height - 50 - (data.magnitude * scaleY * 10);
+          const y = height - 50 - (data.magnitude * scaleY * 5);
           if (index === 0) {
             ctx.moveTo(x, y);
           } else {
@@ -273,12 +298,13 @@ const HandMovementAssessment = () => {
         });
         ctx.stroke();
         
+        // Draw gyroscope alpha (red line)
         ctx.strokeStyle = '#ef4444';
         ctx.lineWidth = 1;
         ctx.beginPath();
         tremorData.forEach((data, index) => {
           const x = 50 + index * scaleX;
-          const y = height - 50 - ((data.gyroscope.alpha || 0) * scaleY * 0.1);
+          const y = height - 50 - ((Math.abs(data.gyroscope.alpha) || 0) * scaleY * 0.5);
           if (index === 0) {
             ctx.moveTo(x, y);
           } else {
@@ -288,11 +314,13 @@ const HandMovementAssessment = () => {
         ctx.stroke();
       }
       
+      // Draw labels
       ctx.fillStyle = '#9ca3af';
       ctx.font = '12px sans-serif';
       ctx.fillText('Acceleration', 10, 20);
       ctx.fillText('Rotation', 10, 35);
       
+      // Draw legend
       ctx.fillStyle = '#3b82f6';
       ctx.fillRect(100, 10, 20, 3);
       ctx.fillStyle = '#ef4444';
@@ -301,12 +329,13 @@ const HandMovementAssessment = () => {
     }, [tremorData]);
     
     return (
-      <canvas 
-        ref={canvasRef}
-        width={400}
-        height={200}
-        className="border border-gray-300 rounded-lg bg-gray-900"
-      />
+      <div className="w-full">
+        <canvas 
+          ref={canvasRef}
+          className="w-full h-48 border border-gray-300 rounded-lg bg-gray-900"
+          style={{ maxWidth: '100%', height: '200px' }}
+        />
+      </div>
     );
   };
 
@@ -415,11 +444,12 @@ const HandMovementAssessment = () => {
         <button
           onClick={handleTap}
           disabled={!isTestRunning && testTimer > 0}
-          className={`w-48 h-48 rounded-full text-2xl font-bold transition-all duration-150 ${
+          className={`w-64 h-64 md:w-48 md:h-48 rounded-full text-3xl md:text-2xl font-bold transition-all duration-150 ${
             isTestRunning 
-              ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-lg transform hover:scale-105' 
+              ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-lg transform hover:scale-105 active:scale-95' 
               : 'bg-gray-300 text-gray-500 cursor-not-allowed'
           }`}
+          style={{ touchAction: 'manipulation' }}
         >
           TAP
         </button>
@@ -449,11 +479,11 @@ const HandMovementAssessment = () => {
   );
 
   const renderTremorTest = (hand) => (
-    <div className="max-w-4xl mx-auto p-6 bg-white rounded-lg shadow-lg">
+    <div className="max-w-4xl mx-auto p-4 md:p-6 bg-white rounded-lg shadow-lg">
       <div className="text-center mb-6">
         <Activity className="mx-auto mb-4 text-purple-600" size={48} />
-        <h2 className="text-2xl font-bold text-gray-800 mb-2">{hand} Hand Tremor Analysis</h2>
-        <p className="text-gray-600">Hold your device steady with your {hand.toLowerCase()} hand</p>
+        <h2 className="text-xl md:text-2xl font-bold text-gray-800 mb-2">{hand} Hand Tremor Analysis</h2>
+        <p className="text-gray-600 text-sm md:text-base">Hold your device steady with your {hand.toLowerCase()} hand</p>
       </div>
       
       <div className="mb-6">
@@ -469,40 +499,40 @@ const HandMovementAssessment = () => {
         </div>
       </div>
       
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+      <div className="grid grid-cols-1 gap-6 mb-6">
         <div>
           <h3 className="font-semibold text-gray-800 mb-4">Real-time Sensor Data</h3>
-          <div className="grid grid-cols-3 gap-4 mb-4">
-            <div className="bg-blue-50 p-3 rounded-lg text-center">
+          <div className="grid grid-cols-3 gap-2 md:gap-4 mb-4">
+            <div className="bg-blue-50 p-2 md:p-3 rounded-lg text-center">
               <div className="text-xs text-blue-600">Accel X</div>
-              <div className="text-lg font-mono">{sensorData.acceleration.x.toFixed(3)}</div>
+              <div className="text-sm md:text-lg font-mono">{sensorData.acceleration.x.toFixed(3)}</div>
             </div>
-            <div className="bg-blue-50 p-3 rounded-lg text-center">
+            <div className="bg-blue-50 p-2 md:p-3 rounded-lg text-center">
               <div className="text-xs text-blue-600">Accel Y</div>
-              <div className="text-lg font-mono">{sensorData.acceleration.y.toFixed(3)}</div>
+              <div className="text-sm md:text-lg font-mono">{sensorData.acceleration.y.toFixed(3)}</div>
             </div>
-            <div className="bg-blue-50 p-3 rounded-lg text-center">
+            <div className="bg-blue-50 p-2 md:p-3 rounded-lg text-center">
               <div className="text-xs text-blue-600">Accel Z</div>
-              <div className="text-lg font-mono">{sensorData.acceleration.z.toFixed(3)}</div>
+              <div className="text-sm md:text-lg font-mono">{sensorData.acceleration.z.toFixed(3)}</div>
             </div>
           </div>
           
-          <div className="grid grid-cols-3 gap-4 mb-4">
-            <div className="bg-red-50 p-3 rounded-lg text-center">
+          <div className="grid grid-cols-3 gap-2 md:gap-4 mb-4">
+            <div className="bg-red-50 p-2 md:p-3 rounded-lg text-center">
               <div className="text-xs text-red-600">Gyro α</div>
-              <div className="text-lg font-mono">{(sensorData.gyroscope.alpha || 0).toFixed(1)}°</div>
+              <div className="text-sm md:text-lg font-mono">{(sensorData.gyroscope.alpha || 0).toFixed(1)}°</div>
             </div>
-            <div className="bg-red-50 p-3 rounded-lg text-center">
+            <div className="bg-red-50 p-2 md:p-3 rounded-lg text-center">
               <div className="text-xs text-red-600">Gyro β</div>
-              <div className="text-lg font-mono">{(sensorData.gyroscope.beta || 0).toFixed(1)}°</div>
+              <div className="text-sm md:text-lg font-mono">{(sensorData.gyroscope.beta || 0).toFixed(1)}°</div>
             </div>
-            <div className="bg-red-50 p-3 rounded-lg text-center">
+            <div className="bg-red-50 p-2 md:p-3 rounded-lg text-center">
               <div className="text-xs text-red-600">Gyro γ</div>
-              <div className="text-lg font-mono">{(sensorData.gyroscope.gamma || 0).toFixed(1)}°</div>
+              <div className="text-sm md:text-lg font-mono">{(sensorData.gyroscope.gamma || 0).toFixed(1)}°</div>
             </div>
           </div>
           
-          <div className="bg-purple-50 p-4 rounded-lg">
+          <div className="bg-purple-50 p-4 rounded-lg mb-4">
             <h4 className="font-semibold text-purple-800 mb-2">Live Analysis</h4>
             <div className="text-sm text-purple-700 space-y-1">
               <div>Tremor Magnitude: {sensorData.magnitude.toFixed(3)} m/s²</div>
