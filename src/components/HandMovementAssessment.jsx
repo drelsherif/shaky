@@ -1,6 +1,51 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Activity, Hand, BarChart3, CheckCircle, Play, Smartphone } from 'lucide-react';
 
+// Simple Tremor Visualization Component
+const TremorVisualization = ({ tremorData }) => {
+  if (!tremorData || tremorData.length === 0) {
+    return (
+      <div className="w-full h-48 bg-gray-100 rounded-lg flex items-center justify-center">
+        <div className="text-gray-500">Waiting for sensor data...</div>
+      </div>
+    );
+  }
+
+  // Create a simple line chart using SVG
+  const width = 400;
+  const height = 200;
+  const padding = 20;
+
+  const maxMagnitude = Math.max(...tremorData.map(d => d.magnitude), 1);
+  const minMagnitude = Math.min(...tremorData.map(d => d.magnitude), 0);
+
+  const points = tremorData.map((d, i) => {
+    const x = (i / (tremorData.length - 1)) * (width - 2 * padding) + padding;
+    // Handle case where maxMagnitude and minMagnitude are the same to avoid division by zero
+    const y = height - padding - ((d.magnitude - minMagnitude) / (maxMagnitude - minMagnitude || 1)) * (height - 2 * padding);
+    return `${x},${y}`;
+  }).join(' ');
+
+  return (
+    <div className="w-full bg-white rounded-lg border p-4">
+      <svg width="100%" height="200" viewBox={`0 0 ${width} ${height}`}>
+        <polyline
+          fill="none"
+          stroke="blue"
+          strokeWidth="2"
+          points={points}
+        />
+        <text x={padding} y={padding} fontSize="12" fill="gray">
+          Max: {maxMagnitude.toFixed(3)}
+        </text>
+        <text x={padding} y={height - 5} fontSize="12" fill="gray">
+          Min: {minMagnitude.toFixed(3)}
+        </text>
+      </svg>
+    </div>
+  );
+};
+
 const HandMovementAssessment = () => {
   const [currentPhase, setCurrentPhase] = useState('intro');
   const [isTestRunning, setIsTestRunning] = useState(false);
@@ -12,14 +57,14 @@ const HandMovementAssessment = () => {
     magnitude: 0,
     frequency: 0
   });
-  const [tremorHistory, setTremorHistory] = useState([]); // For real-time visualization
+  const [tremorHistory, setTremorHistory] = useState([]);
   const [leftHandData, setLeftHandData] = useState(null);
   const [rightHandData, setRightHandData] = useState(null);
   const [permissionGranted, setPermissionGranted] = useState(false);
-  const [testTimer, setTestTimer] = useState(10); // Standard 10-second test duration
+  const [testTimer, setTestTimer] = useState(10);
   const [isIOSDevice, setIsIOSDevice] = useState(false);
   const intervalRef = useRef(null);
-  const tremorDataRef = useRef([]); // This ref collects all sensor data for analysis
+  const tremorDataRef = useRef([]);
 
   // Define the sequence of test phases
   const phases = [
@@ -27,7 +72,7 @@ const HandMovementAssessment = () => {
     'right-tap', 'right-tremor', 'right-results', 'final-results'
   ];
 
-  // Detect iOS device on component mount for permission handling
+  // Detect iOS device on component mount
   useEffect(() => {
     const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
     setIsIOSDevice(iOS);
@@ -40,15 +85,8 @@ const HandMovementAssessment = () => {
 
     const magnitude = Math.sqrt(accel.x ** 2 + accel.y ** 2 + accel.z ** 2);
 
-    // Apply a simple low-pass filter to smooth acceleration data
-    const filteredAccel = {
-      x: accel.x * 0.8 + sensorData.acceleration.x * 0.2,
-      y: accel.y * 0.8 + sensorData.acceleration.y * 0.2,
-      z: accel.z * 0.8 + sensorData.acceleration.z * 0.2
-    };
-
     const newSensorData = {
-      acceleration: filteredAccel,
+      acceleration: accel,
       gyroscope: {
         alpha: rotationRate.alpha || 0,
         beta: rotationRate.beta || 0,
@@ -58,77 +96,59 @@ const HandMovementAssessment = () => {
       timestamp: Date.now()
     };
 
-    setSensorData(newSensorData); // Update live sensor data display
+    setSensorData(newSensorData);
 
     if (isTestRunning && currentPhase.includes('tremor')) {
-      // Collect data into the ref for batch analysis at the end of the test
       tremorDataRef.current.push(newSensorData);
-      // Update tremorHistory state for real-time visualization (only keeps a recent window)
       setTremorHistory(prev => {
         const updatedHistory = [...prev, newSensorData];
-        return updatedHistory.slice(Math.max(updatedHistory.length - 200, 0)); // Keep last 200 points for performance
+        // Keep only the last 200 data points for performance and real-time visualization
+        return updatedHistory.slice(Math.max(updatedHistory.length - 200, 0));
       });
     }
   };
 
   // Analyze tremor frequency using peak detection
   const analyzeTremorFrequency = (data) => {
-    if (data.length < 100) return 0; // Requires sufficient data points for meaningful analysis
+    if (data.length < 10) return 0;
 
     const magnitudes = data.map(d => d.magnitude);
     let peakCount = 0;
-    let lastPeakIndex = -1;
-    const minPeakDistance = 10; // Minimum data points between peaks (adjust based on sensor rate)
+    const threshold = magnitudes.reduce((sum, val) => sum + val, 0) / magnitudes.length;
 
     for (let i = 1; i < magnitudes.length - 1; i++) {
-      if (magnitudes[i] > magnitudes[i - 1] && magnitudes[i] > magnitudes[i + 1]) { // Local maximum
-        if (lastPeakIndex === -1 || (i - lastPeakIndex) > minPeakDistance) {
-          peakCount++;
-          lastPeakIndex = i;
-        }
+      if (magnitudes[i] > magnitudes[i - 1] &&
+          magnitudes[i] > magnitudes[i + 1] &&
+          magnitudes[i] > threshold) {
+        peakCount++;
       }
     }
 
-    const durationSeconds = (data[data.length - 1].timestamp - data[0].timestamp) / 1000;
+    const durationSeconds = data.length > 0 ?
+      (data[data.length - 1].timestamp - data[0].timestamp) / 1000 : 1;
     return durationSeconds > 0 ? peakCount / durationSeconds : 0;
   };
 
-  // Perform clinical analysis of hand movement data
+  // Analyze hand data and return results
   const analyzeHandData = (tapCount, elapsedTime, tremorData, handType) => {
-    console.log(`Analyzing ${handType} hand data:`, { tapCount, elapsedTime, tremorDataPoints: tremorData.length });
+    console.log(`Analyzing ${handType} hand:`, { tapCount, elapsedTime, tremorPoints: tremorData.length });
 
-    const actualElapsedTime = Math.max(1, elapsedTime); // Ensure at least 1 second for calculation
-
-    // Tapping Frequency
-    const frequency = tapCount / actualElapsedTime;
-
-    // Tremor Analysis
+    const frequency = tapCount / Math.max(1, elapsedTime);
     const tremorFrequency = analyzeTremorFrequency(tremorData);
     const tremorAmplitude = tremorData.length > 0 ?
       tremorData.reduce((sum, d) => sum + d.magnitude, 0) / tremorData.length : 0;
 
-    // Gyroscope Stability (inverse of average absolute rotation)
+    // Calculate gyroscope stability
     const gyroRotationSum = tremorData.reduce((sum, d) =>
       sum + (Math.abs(d.gyroscope.alpha || 0) + Math.abs(d.gyroscope.beta || 0) + Math.abs(d.gyroscope.gamma || 0))
     , 0);
     const averageGyroRotation = tremorData.length > 0 ? gyroRotationSum / tremorData.length : 0;
-    const gyroStability = Math.max(0, 100 - (averageGyroRotation * 2)); // Scale to 0-100, adjust '2' for sensitivity
+    const gyroStability = Math.max(0, 100 - (averageGyroRotation * 0.1));
 
-    // Rhythmicity (how close tapping frequency is to an ideal, e.g., 5 Hz)
-    const rhythmicity = frequency > 0 ? Math.max(0, 100 - (Math.abs(frequency - 5) * 15)) : 0;
-    const spatialConsistency = gyroStability; // Using gyro stability as a proxy for spatial consistency
-
-    // Score Categorization
-    const getScoreCategory = (score) => {
-      if (score >= 90) return { category: 'Excellent', color: 'text-green-600' };
-      if (score >= 75) return { category: 'Good', color: 'text-blue-600' };
-      if (score >= 60) return { category: 'Fair', color: 'text-yellow-600' };
-      return { category: 'Poor', color: 'text-red-600' };
-    };
-
-    // Overall Score Calculation (weighted average)
-    const frequencyScore = Math.min(100, frequency * 20); // Scale tapping frequency to score
-    const tremorQualityScore = Math.max(0, 100 - (tremorFrequency * 5) - (tremorAmplitude * 100)); // Lower tremor is better
+    // Calculate scores
+    const frequencyScore = Math.min(100, frequency * 20); // Scale tapping frequency to a score
+    const rhythmicity = frequency > 0 ? Math.max(0, 100 - (Math.abs(frequency - 5) * 15)) : 0; // Penalize deviation from an ideal tapping rhythm (e.g., 5Hz)
+    const tremorQualityScore = Math.max(0, 100 - (tremorFrequency * 5) - (tremorAmplitude * 10)); // Penalize high tremor frequency and amplitude
 
     const overallScore = Math.min(100, Math.max(0,
       (frequencyScore * 0.4) +
@@ -137,44 +157,53 @@ const HandMovementAssessment = () => {
       (tremorQualityScore * 0.1)
     ));
 
-    const category = getScoreCategory(overallScore);
+    // Determine category
+    let category, categoryColor;
+    if (overallScore >= 90) {
+      category = 'Excellent';
+      categoryColor = 'text-green-600';
+    } else if (overallScore >= 75) {
+      category = 'Good';
+      categoryColor = 'text-blue-600';
+    } else if (overallScore >= 60) {
+      category = 'Fair';
+      categoryColor = 'text-yellow-600';
+    } else {
+      category = 'Poor';
+      categoryColor = 'text-red-600';
+    }
 
-    // Clinical Interpretation based on calculated metrics
-    let clinicalInterpretation = 'Normal motor function, no significant anomalies detected.';
-    if (frequency < 3) {
-      clinicalInterpretation = 'Bradykinesia detected (reduced movement speed). May indicate motor slowness. ';
-      if (frequency < 1) clinicalInterpretation = 'Severe bradykinesia detected - significantly reduced movement speed. ';
+    // Clinical interpretation
+    let clinicalInterpretation = 'Normal motor function detected.';
+    if (frequency < 3 && currentPhase.includes('tap')) { // Only apply to tapping tests
+      clinicalInterpretation = 'Bradykinesia detected - reduced movement speed.';
     }
     if (tremorFrequency > 0 && tremorFrequency < 6 && tremorAmplitude > 0.25) {
-      clinicalInterpretation += 'Possible pathological tremor (e.g., essential or resting tremor characteristics). Further clinical evaluation advised.';
-    } else if (tremorFrequency >= 6 && tremorFrequency <= 12 && tremorAmplitude <= 0.25) {
-      clinicalInterpretation += 'Physiological tremor detected, within normal limits and generally not concerning.';
-    } else if (tremorAmplitude > 0.5) {
-      clinicalInterpretation += 'Significant tremor amplitude detected. Highly recommend a physician consultation.';
+      clinicalInterpretation += ' Possible pathological tremor detected.';
     }
     if (gyroStability < 60) {
-      clinicalInterpretation += ' Reduced hand stability observed, which could be related to motor control issues or tremor.';
+      clinicalInterpretation += ' Reduced hand stability observed.';
     }
 
     const results = {
       frequency: Number(frequency.toFixed(2)),
       rhythmicity: Number(rhythmicity.toFixed(1)),
-      spatialConsistency: Number(spatialConsistency.toFixed(1)),
+      spatialConsistency: Number(gyroStability.toFixed(1)), // Renamed from gyroStability for clarity
       tremorFrequency: Number(tremorFrequency.toFixed(2)),
       tremorAmplitude: Number(tremorAmplitude.toFixed(3)),
       gyroStability: Number(gyroStability.toFixed(1)),
       overallScore: Number(overallScore.toFixed(1)),
-      category: category.category,
-      categoryColor: category.color,
+      category,
+      categoryColor,
       clinicalInterpretation,
-      tremorData: [...tremorData] // Store a copy for review in results
+      tremorData: [...tremorData] // Store a copy of tremorData for visualization if needed
     };
 
-    console.log('Final computed results:', results);
+    console.log('Analysis results:', results);
     return results;
   };
 
-  // Request motion sensor permissions (especially for iOS)
+  // Request sensor permissions
   const requestSensorPermissions = async () => {
     try {
       let granted = false;
@@ -182,48 +211,54 @@ const HandMovementAssessment = () => {
         const permission = await DeviceMotionEvent.requestPermission();
         granted = permission === 'granted';
       } else {
-        granted = true; // Non-iOS devices typically grant access by default
+        // For non-iOS devices or if permission API is not available
+        granted = true;
       }
 
       setPermissionGranted(granted);
 
       if (granted) {
         window.addEventListener('devicemotion', handleMotionEvent, true);
-        setTimeout(nextPhase, 1000); // Proceed after a short delay
+        // Directly move to the next phase after permissions are handled
+        goToNextPhase();
       } else {
-        alert('Sensor access denied. The app will use simulated data for demonstration, which may limit accuracy.');
-        setPermissionGranted(true); // Allow proceeding in demonstration mode
-        setTimeout(nextPhase, 1000);
+        alert('Sensor access denied. Using demo mode with limited functionality.');
+        setPermissionGranted(true); // Allow proceeding even if denied for demo purposes
+        goToNextPhase();
       }
     } catch (error) {
       console.error('Permission request failed:', error);
-      alert('Could not request sensor access. Please ensure your device supports motion sensors.');
-      setPermissionGranted(true); // Allow proceeding
-      setTimeout(nextPhase, 1000);
+      alert('Error requesting sensor permissions. Using demo mode.');
+      setPermissionGranted(true); // Allow proceeding for demo purposes
+      goToNextPhase();
     }
   };
 
-  // Start the 10-second test timer and measurement
+  // Start test with proper initialization
   const startTest = () => {
+    console.log('Starting test for phase:', currentPhase);
     setIsTestRunning(true);
     setTestProgress(0);
-    // Reset tapCount and tremorDataRef only when starting a new test, not on phase change
-    if (currentPhase.includes('tap')) setTapCount(0);
-    if (currentPhase.includes('tremor')) {
-      tremorDataRef.current = [];
-      setTremorHistory([]);
+    setTestTimer(10); // Reset timer to initial value
+    
+    // Reset appropriate counters based on test type
+    if (currentPhase.includes('tap')) {
+      setTapCount(0);
     }
-    setTestTimer(10); // Always start from 10 seconds
+    if (currentPhase.includes('tremor')) {
+      tremorDataRef.current = []; // Clear previous tremor data
+      setTremorHistory([]); // Clear previous tremor history for visualization
+    }
 
     intervalRef.current = setInterval(() => {
       setTestTimer(prev => {
         const newTimer = prev - 1;
-        setTestProgress(((10 - newTimer) / 10) * 100); // Progress from 0% to 100%
+        setTestProgress(((10 - newTimer) / 10) * 100);
 
         if (newTimer <= 0) {
           clearInterval(intervalRef.current);
           intervalRef.current = null;
-          stopTest(); // Call stopTest when timer finishes
+          stopTest(); // Call stopTest when timer runs out
           return 0;
         }
         return newTimer;
@@ -231,56 +266,63 @@ const HandMovementAssessment = () => {
     }, 1000);
   };
 
-  // Stop the current test, analyze data, and save results
+  // Stop test and analyze data
   const stopTest = () => {
-    setIsTestRunning(false); // Stop recording
+    console.log('Stopping test for phase:', currentPhase);
+    setIsTestRunning(false);
+    
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
 
-    const elapsedTime = 10; // Test duration is fixed at 10 seconds
-
+    const elapsedTime = 10; // The test duration is fixed at 10 seconds
     let results;
+
     if (currentPhase.includes('tap')) {
+      console.log('Analyzing tap data:', { tapCount, elapsedTime });
       results = analyzeHandData(tapCount, elapsedTime, [], currentPhase.includes('left') ? 'left' : 'right');
     } else if (currentPhase.includes('tremor')) {
+      console.log('Analyzing tremor data:', { tremorPoints: tremorDataRef.current.length, elapsedTime });
       results = analyzeHandData(0, elapsedTime, tremorDataRef.current, currentPhase.includes('left') ? 'left' : 'right');
     }
 
+    // Save results
     if (currentPhase.includes('left')) {
+      console.log('Saving left hand data:', results);
       setLeftHandData(results);
-    } else {
+    } else if (currentPhase.includes('right')) {
+      console.log('Saving right hand data:', results);
       setRightHandData(results);
     }
-
-    console.log(`Test for ${currentPhase} completed. Results saved.`);
-    // Do NOT call nextPhase here. Let the UI button handle progression.
   };
 
-  // Handle tap event for tapping test
+  // Handle tap events
   const handleTap = () => {
     if (isTestRunning && currentPhase.includes('tap')) {
       setTapCount(prev => prev + 1);
     }
   };
 
-  // Progress to the next phase in the sequence
+  // Navigate to next phase
   const goToNextPhase = () => {
     const currentIndex = phases.indexOf(currentPhase);
     if (currentIndex < phases.length - 1) {
-      setCurrentPhase(phases[currentIndex + 1]);
-      // Reset states for the NEXT phase's start
+      const nextPhase = phases[currentIndex + 1];
+      console.log('Moving to next phase:', nextPhase);
+      setCurrentPhase(nextPhase);
+      
+      // Reset states for new phase
       setTestProgress(0);
       setTapCount(0);
       setTestTimer(10);
       tremorDataRef.current = [];
       setTremorHistory([]);
-      setIsTestRunning(false); // Ensure not running at the start of new phase
+      setIsTestRunning(false); // Ensure test is not running when entering new phase
     }
   };
 
-  // Cleanup effect for event listeners and intervals
+  // Cleanup effect for event listener and interval
   useEffect(() => {
     return () => {
       window.removeEventListener('devicemotion', handleMotionEvent);
@@ -288,24 +330,23 @@ const HandMovementAssessment = () => {
     };
   }, []);
 
-  // --- Render Functions for Each Phase ---
-
+  // Render functions
   const renderIntroduction = () => (
     <div className="max-w-2xl mx-auto p-8 bg-white rounded-lg shadow-lg">
       <div className="text-center mb-8">
         <Activity className="mx-auto mb-6 text-blue-600" size={64} />
         <h1 className="text-3xl md:text-4xl font-bold text-gray-800 mb-4">Clinical Hand Movement Assessment</h1>
-        <p className="text-gray-600 text-lg">Progressive Web App with Real Sensor Integration</p>
+        <p className="text-gray-600 text-lg">Real Sensor Integration & Analysis</p>
       </div>
 
       <div className="space-y-6 mb-8">
         <div className="bg-blue-50 p-6 rounded-lg">
-          <h3 className="font-semibold text-blue-800 mb-4 text-lg">Advanced Features</h3>
+          <h3 className="font-semibold text-blue-800 mb-4 text-lg">Features</h3>
           <ul className="text-blue-700 space-y-2">
             <li>• Real-time accelerometer and gyroscope data</li>
-            <li>• 3D tremor visualization and analysis</li>
+            <li>• Tremor visualization and analysis</li>
             <li>• Clinical-grade frequency analysis</li>
-            <li>• Progressive Web App (PWA) compatible</li>
+            <li>• Bilateral hand comparison</li>
           </ul>
         </div>
 
@@ -315,46 +356,31 @@ const HandMovementAssessment = () => {
               <Smartphone className="mr-3 text-yellow-600" size={24} />
               <h4 className="font-semibold text-yellow-800 text-lg">iOS Device Detected</h4>
             </div>
-            <p className="text-yellow-700">This app will request permission to access your device's motion sensors for accurate tremor analysis.</p>
+            <p className="text-yellow-700">This app will request permission to access motion sensors.</p>
           </div>
         )}
-
-        <div className="grid grid-cols-2 gap-6">
-          <div className="bg-gray-50 p-6 rounded-lg">
-            <h4 className="font-semibold mb-3 text-lg">Left Hand Tests</h4>
-            <ul className="text-gray-600 space-y-2">
-              <li>• Tapping frequency analysis</li>
-              <li>• 3D tremor mapping</li>
-              <li>• Gyroscope stability</li>
-            </ul>
-          </div>
-          <div className="bg-gray-50 p-6 rounded-lg">
-            <h4 className="font-semibold mb-3 text-lg">Right Hand Tests</h4>
-            <ul className="text-gray-600 space-y-2">
-              <li>• Bilateral comparison</li>
-              <li>• Dominance prediction</li>
-              <li>• Clinical scoring</li>
-            </ul>
-          </div>
-        </div>
       </div>
 
       <div className="text-center">
         {!permissionGranted ? (
           <button
             onClick={requestSensorPermissions}
-            className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white px-12 py-6 rounded-xl text-xl font-semibold transition-colors shadow-lg"
-            style={{ touchAction: 'manipulation' }}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-12 py-6 rounded-xl text-xl font-semibold transition-colors shadow-lg"
           >
-            {isIOSDevice ? 'Grant Motion Permissions & Start' : 'Start Assessment'}
+            {isIOSDevice ? 'Grant Permissions & Start' : 'Start Assessment'}
           </button>
         ) : (
           <div className="space-y-6">
             <div className="flex items-center justify-center text-green-600">
               <CheckCircle size={32} className="mr-3" />
-              <span className="text-xl font-semibold">Sensor access granted!</span>
+              <span className="text-xl font-semibold">Ready to start!</span>
             </div>
-            <div className="text-gray-600 text-lg">Starting assessment...</div>
+            <button
+              onClick={goToNextPhase} // Automatically proceed after permissions granted or acknowledged
+              className="bg-blue-600 hover:bg-blue-700 text-white px-12 py-6 rounded-xl text-xl font-semibold transition-colors shadow-lg"
+            >
+              Begin Assessment
+            </button>
           </div>
         )}
       </div>
@@ -366,7 +392,7 @@ const HandMovementAssessment = () => {
       <div className="text-center mb-8">
         <Hand className="mx-auto mb-6 text-blue-600" size={56} />
         <h2 className="text-2xl md:text-3xl font-bold text-gray-800 mb-4">{hand} Hand Tapping Test</h2>
-        <p className="text-gray-600 text-lg">Tap the button as quickly as possible for 10 seconds</p>
+        <p className="text-gray-600 text-lg">Tap as quickly as possible for 10 seconds</p>
       </div>
 
       <div className="mb-8">
@@ -395,40 +421,32 @@ const HandMovementAssessment = () => {
       <div className="flex justify-center mb-12">
         <button
           onClick={handleTap}
-          disabled={!isTestRunning} // Only disable if test is not running
+          disabled={!isTestRunning}
           className={`w-80 h-80 rounded-full text-4xl font-bold transition-all duration-150 ${
             isTestRunning
-              ? 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white shadow-2xl transform hover:scale-105 active:scale-95'
+              ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-2xl'
               : 'bg-gray-300 text-gray-500 cursor-not-allowed'
           }`}
-          style={{
-            touchAction: 'manipulation',
-            userSelect: 'none',
-            WebkitUserSelect: 'none',
-            WebkitTouchCallout: 'none'
-          }}
         >
           TAP
         </button>
       </div>
 
       <div className="text-center space-y-6">
-        {!isTestRunning && testTimer === 10 && ( // Test not started yet
+        {!isTestRunning && testTimer === 10 && ( // Display start button only before test begins
           <button
             onClick={startTest}
-            className="bg-green-600 hover:bg-green-700 active:bg-green-800 text-white px-12 py-6 rounded-xl text-xl font-semibold transition-colors shadow-lg"
-            style={{ touchAction: 'manipulation' }}
+            className="bg-green-600 hover:bg-green-700 text-white px-12 py-6 rounded-xl text-xl font-semibold transition-colors shadow-lg"
           >
             <Play size={24} className="inline mr-3" />
             Start Test
           </button>
         )}
 
-        {!isTestRunning && testTimer === 0 && ( // Test finished
+        {!isTestRunning && testTimer === 0 && ( // Display continue button only after test ends
           <button
             onClick={goToNextPhase}
-            className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white px-12 py-6 rounded-xl text-xl font-semibold transition-colors shadow-lg"
-            style={{ touchAction: 'manipulation' }}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-12 py-6 rounded-xl text-xl font-semibold transition-colors shadow-lg"
           >
             Continue to Tremor Analysis
           </button>
@@ -442,8 +460,7 @@ const HandMovementAssessment = () => {
       <div className="text-center mb-8">
         <Activity className="mx-auto mb-6 text-purple-600" size={56} />
         <h2 className="text-2xl md:text-3xl font-bold text-gray-800 mb-4">{hand} Hand Tremor Analysis</h2>
-        <p className="text-gray-600 text-lg mb-2">Hold your device steady with your {hand.toLowerCase()} hand</p>
-        <p className="text-sm text-gray-500">Keep the device still to measure natural tremor</p>
+        <p className="text-gray-600 text-lg mb-2">Hold device steady with your {hand.toLowerCase()} hand</p>
       </div>
 
       <div className="mb-8">
@@ -462,209 +479,164 @@ const HandMovementAssessment = () => {
       <div className="grid grid-cols-1 gap-8 mb-8">
         <div>
           <h3 className="font-semibold text-gray-800 mb-6 text-xl">Real-time Sensor Data</h3>
-          <div className="grid grid-cols-3 gap-3 md:gap-4 mb-6">
-            <div className="bg-blue-50 p-4 md:p-6 rounded-lg text-center">
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="bg-blue-50 p-4 rounded-lg text-center">
               <div className="text-sm text-blue-600 mb-2">Accel X</div>
-              <div className="text-lg md:text-xl font-mono font-bold">{sensorData.acceleration.x.toFixed(3)}</div>
+              <div className="text-lg font-mono font-bold">{sensorData.acceleration.x.toFixed(3)}</div>
             </div>
-            <div className="bg-blue-50 p-4 md:p-6 rounded-lg text-center">
+            <div className="bg-blue-50 p-4 rounded-lg text-center">
               <div className="text-sm text-blue-600 mb-2">Accel Y</div>
-              <div className="text-lg md:text-xl font-mono font-bold">{sensorData.acceleration.y.toFixed(3)}</div>
+              <div className="text-lg font-mono font-bold">{sensorData.acceleration.y.toFixed(3)}</div>
             </div>
-            <div className="bg-blue-50 p-4 md:p-6 rounded-lg text-center">
+            <div className="bg-blue-50 p-4 rounded-lg text-center">
               <div className="text-sm text-blue-600 mb-2">Accel Z</div>
-              <div className="text-lg md:text-xl font-mono font-bold">{sensorData.acceleration.z.toFixed(3)}</div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-3 gap-3 md:gap-4 mb-6">
-            <div className="bg-red-50 p-4 md:p-6 rounded-lg text-center">
-              <div className="text-sm text-red-600 mb-2">Gyro α</div>
-              <div className="text-lg md:text-xl font-mono font-bold">{(sensorData.gyroscope.alpha || 0).toFixed(1)}°</div>
-            </div>
-            <div className="bg-red-50 p-4 md:p-6 rounded-lg text-center">
-              <div className="text-sm text-red-600 mb-2">Gyro β</div>
-              <div className="text-lg md:text-xl font-mono font-bold">{(sensorData.gyroscope.beta || 0).toFixed(1)}°</div>
-            </div>
-            <div className="bg-red-50 p-4 md:p-6 rounded-lg text-center">
-              <div className="text-sm text-red-600 mb-2">Gyro γ</div>
-              <div className="text-lg md:text-xl font-mono font-bold">{(sensorData.gyroscope.gamma || 0).toFixed(1)}°</div>
+              <div className="text-lg font-mono font-bold">{sensorData.acceleration.z.toFixed(3)}</div>
             </div>
           </div>
 
           <div className="bg-purple-50 p-6 rounded-lg mb-6">
             <h4 className="font-semibold text-purple-800 mb-4 text-lg">Live Analysis</h4>
             <div className="text-base text-purple-700 space-y-2">
-              <div>Tremor Magnitude: <span className="font-mono font-bold">{sensorData.magnitude.toFixed(3)} m/s²</span></div>
-              <div>Estimated Frequency: <span className="font-mono font-bold">{analyzeTremorFrequency(tremorHistory).toFixed(1)} Hz</span></div>
-              <div>Data Points Collected: <span className="font-mono font-bold">{tremorHistory.length}</span></div>
+              <div>Magnitude: <span className="font-mono font-bold">{sensorData.magnitude.toFixed(3)} m/s²</span></div>
+              <div>Frequency: <span className="font-mono font-bold">{analyzeTremorFrequency(tremorHistory).toFixed(1)} Hz</span></div>
+              <div>Data Points: <span className="font-mono font-bold">{tremorHistory.length}</span></div>
             </div>
           </div>
         </div>
 
         <div>
-          <h3 className="font-semibold text-gray-800 mb-4 text-xl">3D Tremor Visualization</h3>
+          <h3 className="font-semibold text-gray-800 mb-4 text-xl">Tremor Visualization</h3>
           <TremorVisualization tremorData={tremorHistory} />
-          <div className="text-sm text-gray-500 mt-4 text-center">
-            Blue: Acceleration magnitude, Red: Rotation (alpha)
-          </div>
         </div>
       </div>
 
       <div className="text-center space-y-6">
-        {!isTestRunning && testTimer === 10 && ( // Test not started yet
+        {!isTestRunning && testTimer === 10 && ( // Display start button only before test begins
           <button
             onClick={startTest}
-            className="bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white px-12 py-6 rounded-xl text-xl font-semibold transition-colors shadow-lg"
-            style={{ touchAction: 'manipulation' }}
+            className="bg-purple-600 hover:bg-purple-700 text-white px-12 py-6 rounded-xl text-xl font-semibold transition-colors shadow-lg"
           >
             <Play size={24} className="inline mr-3" />
             Start Analysis
           </button>
         )}
 
-        {!isTestRunning && testTimer === 0 && ( // Test finished
+        {!isTestRunning && testTimer === 0 && ( // Display continue button only after test ends
           <button
             onClick={goToNextPhase}
-            className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white px-12 py-6 rounded-xl text-xl font-semibold transition-colors shadow-lg"
-            style={{ touchAction: 'manipulation' }}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-12 py-6 rounded-xl text-xl font-semibold transition-colors shadow-lg"
           >
-            View Detailed Results
+            View Results
           </button>
         )}
       </div>
     </div>
   );
 
-  const renderHandResults = (hand, data) => (
-    <div className="max-w-3xl mx-auto p-6 bg-white rounded-lg shadow-lg">
-      <div className="text-center mb-6">
-        <BarChart3 className="mx-auto mb-4 text-green-600" size={48} />
-        <h2 className="text-2xl font-bold text-gray-800 mb-2">{hand} Hand Clinical Results</h2>
-        <p className="text-gray-600">Comprehensive sensor-based analysis</p>
-      </div>
-
-      {data ? (
-        <div className="space-y-6">
-          <div className="bg-gray-50 p-4 rounded-lg">
-            <h3 className="font-semibold text-gray-800 mb-3">Clinical Assessment</h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex items-center justify-between">
-                <span className="text-gray-600">Overall Score:</span>
-                <span className={`font-bold ${data.categoryColor}`}>{data.overallScore.toFixed(1)}/100</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-gray-600">Category:</span>
-                <span className={`font-bold ${data.categoryColor}`}>{data.category}</span>
-              </div>
-            </div>
-            <div className="mt-3 p-3 bg-blue-50 rounded-lg">
-              <div className="text-sm font-medium text-blue-800">Clinical Interpretation:</div>
-              <div className="text-sm text-blue-700">{data.clinicalInterpretation}</div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-blue-50 p-4 rounded-lg">
-              <h4 className="font-semibold text-blue-800 mb-3">Motor Function</h4>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span>Tapping Frequency:</span>
-                  <span className="font-mono">{data.frequency.toFixed(1)} Hz</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Rhythmicity:</span>
-                  <span className="font-mono">{data.rhythmicity.toFixed(1)}%</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Consistency:</span>
-                  <span className="font-mono">{data.spatialConsistency.toFixed(1)}%</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-purple-50 p-4 rounded-lg">
-              <h4 className="font-semibold text-purple-800 mb-3">Tremor Analysis</h4>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span>Frequency:</span>
-                  <span className="font-mono">{data.tremorFrequency.toFixed(1)} Hz</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Amplitude:</span>
-                  <span className="font-mono">{data.tremorAmplitude.toFixed(3)} m/s²</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Type:</span>
-                  <span className="font-mono">
-                    {data.tremorFrequency > 8 ? 'Physiological' :
-                     data.tremorFrequency > 0 && data.tremorFrequency < 6 ? 'Pathological' : 'Minimal'}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-green-50 p-4 rounded-lg">
-              <h4 className="font-semibold text-green-800 mb-3">Stability</h4>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span>Gyro Stability:</span>
-                  <span className="font-mono">{data.gyroStability.toFixed(1)}%</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Data Points:</span>
-                  <span className="font-mono">{data.tremorData.length}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Quality:</span>
-                  <span className="font-mono">
-                    {data.tremorData.length > 50 ? 'High' : 'Moderate'}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-yellow-50 p-4 rounded-lg">
-            <h4 className="font-semibold text-yellow-800 mb-2">Clinical Reference Values</h4>
-            <div className="text-sm text-yellow-700 space-y-1">
-              <div>• Normal tapping frequency: 3-8 Hz</div>
-              <div>• Physiological tremor: 6-12 Hz, less than 0.25 m/s²</div>
-              <div>• Pathological tremor: 3-7 Hz, greater than 0.25 m/s²</div>
-              <div>• Bradykinesia threshold: less than 3 Hz tapping</div>
-            </div>
-          </div>
+  const renderHandResults = (hand, data) => {
+    console.log(`Rendering results for ${hand} hand:`, data);
+    
+    return (
+      <div className="max-w-3xl mx-auto p-6 bg-white rounded-lg shadow-lg">
+        <div className="text-center mb-6">
+          <BarChart3 className="mx-auto mb-4 text-green-600" size={48} />
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">{hand} Hand Results</h2>
+          <p className="text-gray-600">Clinical analysis completed</p>
         </div>
-      ) : (
-        <div className="text-center text-gray-500 py-8">
-          No data available for {hand} hand yet. Please complete the tests.
-        </div>
-      )}
 
-      <div className="text-center mt-6">
-        <button
-          onClick={goToNextPhase}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-semibold transition-colors"
-        >
-          {currentPhase === 'left-results' ? 'Test Right Hand' : 'View Final Results'}
-        </button>
+        {data ? (
+          <div className="space-y-6">
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <h3 className="font-semibold text-gray-800 mb-3">Clinical Assessment</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Overall Score:</span>
+                  <span className={`font-bold ${data.categoryColor}`}>{data.overallScore}/100</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Category:</span>
+                  <span className={`font-bold ${data.categoryColor}`}>{data.category}</span>
+                </div>
+              </div>
+              <div className="mt-3 p-3 bg-blue-50 rounded-lg">
+                <div className="text-sm font-medium text-blue-800">Clinical Interpretation:</div>
+                <div className="text-sm text-blue-700">{data.clinicalInterpretation}</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-blue-50 p-4 rounded-lg">
+                <h4 className="font-semibold text-blue-800 mb-3">Motor Function</h4>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span>Frequency:</span>
+                    <span className="font-mono">{data.frequency} Hz</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Rhythmicity:</span>
+                    <span className="font-mono">{data.rhythmicity}%</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-purple-50 p-4 rounded-lg">
+                <h4 className="font-semibold text-purple-800 mb-3">Tremor Analysis</h4>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span>Frequency:</span>
+                    <span className="font-mono">{data.tremorFrequency} Hz</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Amplitude:</span>
+                    <span className="font-mono">{data.tremorAmplitude}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-green-50 p-4 rounded-lg">
+                <h4 className="font-semibold text-green-800 mb-3">Stability</h4>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span>Gyro Stability:</span>
+                    <span className="font-mono">{data.gyroStability}%</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Data Points:</span>
+                    <span className="font-mono">{data.tremorData.length}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="text-center text-gray-500 py-8">
+            No data available for {hand} hand. Please complete the tests.
+          </div>
+        )}
+
+        <div className="text-center mt-6">
+          <button
+            onClick={goToNextPhase}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-semibold transition-colors"
+          >
+            {currentPhase === 'left-results' ? 'Test Right Hand' : 'View Final Results'}
+          </button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderFinalResults = () => {
+    // Determine dominant hand based on overall score, if both hands have data
     const dominantHand = leftHandData && rightHandData ?
       (leftHandData.overallScore > rightHandData.overallScore ? 'Left' : 'Right') : 'Unknown';
-
-    const confidenceScore = leftHandData && rightHandData ?
-      (100 - Math.min(100, Math.abs(leftHandData.overallScore - rightHandData.overallScore) * 2)).toFixed(1) : 'N/A';
 
     return (
       <div className="max-w-5xl mx-auto p-6 bg-white rounded-lg shadow-lg">
         <div className="text-center mb-6">
           <CheckCircle className="mx-auto mb-4 text-green-600" size={48} />
-          <h2 className="text-3xl font-bold text-gray-800 mb-2">Comprehensive Clinical Assessment</h2>
-          <p className="text-gray-600">Advanced bilateral hand movement analysis with real sensor data</p>
+          <h2 className="text-3xl font-bold text-gray-800 mb-2">Final Assessment</h2>
+          <p className="text-gray-600">Bilateral hand movement analysis complete</p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
@@ -673,31 +645,20 @@ const HandMovementAssessment = () => {
               <h3 className="font-bold text-blue-800 mb-4 text-xl">Left Hand Summary</h3>
               <div className="space-y-3">
                 <div className="flex justify-between">
-                  <span>Clinical Score:</span>
-                  <span className={`font-bold ${leftHandData.categoryColor}`}>
-                    {leftHandData.overallScore.toFixed(1)}/100
+                  <span>Score:</span>
+                  <span className={`font-bold ${leftHandData.categoryColor}`}> {/* Corrected: Use leftHandData */}
+                    {leftHandData.overallScore}/100
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span>Category:</span>
-                  <span className={`font-bold ${leftHandData.categoryColor}`}>
+                  <span className={`font-bold ${leftHandData.categoryColor}`}> {/* Corrected: Use leftHandData */}
                     {leftHandData.category}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span>Tapping Rate:</span>
-                  <span className="font-mono">{leftHandData.frequency.toFixed(1)} Hz</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Tremor Frequency:</span>
-                  <span className="font-mono">{leftHandData.tremorFrequency.toFixed(1)} Hz</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Gyro Stability:</span>
-                  <span className="font-mono">{leftHandData.gyroStability.toFixed(1)}%</span>
-                </div>
-                <div className="text-xs text-blue-600 mt-2">
-                  {leftHandData.tremorData.length} sensor data points analyzed
+                  <span className="font-mono">{leftHandData.frequency} Hz</span> {/* Corrected: Use leftHandData */}
                 </div>
               </div>
             </div>
@@ -708,9 +669,9 @@ const HandMovementAssessment = () => {
               <h3 className="font-bold text-green-800 mb-4 text-xl">Right Hand Summary</h3>
               <div className="space-y-3">
                 <div className="flex justify-between">
-                  <span>Clinical Score:</span>
+                  <span>Score:</span>
                   <span className={`font-bold ${rightHandData.categoryColor}`}>
-                    {rightHandData.overallScore.toFixed(1)}/100
+                    {rightHandData.overallScore}/100
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -721,18 +682,7 @@ const HandMovementAssessment = () => {
                 </div>
                 <div className="flex justify-between">
                   <span>Tapping Rate:</span>
-                  <span className="font-mono">{rightHandData.frequency.toFixed(1)} Hz</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Tremor Frequency:</span>
-                  <span className="font-mono">{rightHandData.tremorFrequency.toFixed(1)} Hz</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Gyro Stability:</span>
-                  <span className="font-mono">{rightHandData.gyroStability.toFixed(1)}%</span>
-                </div>
-                <div className="text-xs text-green-600 mt-2">
-                  {rightHandData.tremorData.length} sensor data points analyzed
+                  <span className="font-mono">{rightHandData.frequency} Hz</span>
                 </div>
               </div>
             </div>
@@ -740,105 +690,32 @@ const HandMovementAssessment = () => {
         </div>
 
         <div className="bg-purple-50 p-6 rounded-lg mb-6">
-          <h3 className="font-bold text-purple-800 mb-4 text-xl">Advanced Hand Dominance Prediction</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <div className="text-3xl font-bold text-purple-800 mb-2">
-                Predicted Dominant Hand: {dominantHand}
-              </div>
-              <div className="text-purple-700 mb-4">
-                Confidence Score: {confidenceScore}%
-              </div>
-              <div className="space-y-2 text-sm text-purple-700">
-                <div>• Multi-modal sensor analysis</div>
-                <div>• Motor performance differential</div>
-                <div>• Gyroscopic stability comparison</div>
-                <div>• Real-time tremor assessment</div>
-              </div>
-            </div>
-            <div className="bg-white p-4 rounded-lg">
-              <h4 className="font-semibold text-gray-800 mb-3">Bilateral Comparison</h4>
-              {leftHandData && rightHandData ? (
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span>Tapping Difference:</span>
-                    <span className="font-mono">
-                      {Math.abs(leftHandData.frequency - rightHandData.frequency).toFixed(1)} Hz
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Tremor Difference:</span>
-                    <span className="font-mono">
-                      {Math.abs(leftHandData.tremorFrequency - rightHandData.tremorFrequency).toFixed(1)} Hz
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Stability Difference:</span>
-                    <span className="font-mono">
-                      {Math.abs(leftHandData.gyroStability - rightHandData.gyroStability).toFixed(1)}%
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-sm text-gray-500">Complete both hand tests for bilateral comparison.</div>
-              )}
-            </div>
+          <h3 className="font-bold text-purple-800 mb-4 text-xl">Hand Dominance Analysis</h3>
+          <div className="text-2xl font-bold text-purple-800 mb-2">
+            Predicted Dominant Hand: {dominantHand}
           </div>
+          {leftHandData && rightHandData && (
+            <div className="text-purple-700 space-y-2">
+              <div>Score Difference: {Math.abs(leftHandData.overallScore - rightHandData.overallScore).toFixed(1)} points</div>
+              <div>Tapping Difference: {Math.abs(leftHandData.frequency - rightHandData.frequency).toFixed(1)} Hz</div>
+            </div>
+          )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-          <div className="bg-yellow-50 p-6 rounded-lg">
-            <h3 className="font-bold text-yellow-800 mb-4 text-xl">Clinical Recommendations</h3>
-            <div className="space-y-2 text-sm text-yellow-700">
-              {leftHandData && rightHandData && leftHandData.overallScore > 75 && rightHandData.overallScore > 75 ? (
-                <>
-                  <div>✓ Normal bilateral motor function detected</div>
-                  <div>✓ No significant tremor abnormalities</div>
-                  <div>✓ Adequate hand coordination and stability</div>
-                </>
-              ) : (
-                <>
-                  <div>⚠ Consider follow-up neurological assessment</div>
-                  <div>⚠ Monitor for progressive motor changes</div>
-                  <div>⚠ Possible motor function impairment detected</div>
-                </>
-              )}
-              <div className="mt-3 pt-3 border-t border-yellow-200">
-                <div>• Results based on real sensor data analysis</div>
-                <div>• Consult healthcare provider for clinical interpretation</div>
-                <div>• Consider environmental factors during testing</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-indigo-50 p-6 rounded-lg">
-            <h3 className="font-bold text-indigo-800 mb-4 text-xl">Technical Summary</h3>
-            <div className="space-y-2 text-sm text-indigo-700">
-              <div>• Real iPhone sensor integration</div>
-              <div>• Advanced gyroscope analysis</div>
-              <div>• 3D tremor visualization</div>
-              <div>• Clinical-grade frequency analysis</div>
-              <div>• Progressive Web App (PWA) compatible</div>
-              <div className="mt-3 pt-3 border-t border-indigo-200">
-                <div className="font-medium">Data Quality:</div>
-                <div>
-                  Left: {leftHandData ? leftHandData.tremorData.length : 0} points,
-                  Right: {rightHandData ? rightHandData.tremorData.length : 0} points
-                </div>
-              </div>
-            </div>
+        <div className="bg-yellow-50 p-6 rounded-lg mb-6">
+          <h3 className="font-bold text-yellow-800 mb-4 text-xl">Clinical Summary</h3>
+          <div className="text-yellow-700 space-y-2">
+            {leftHandData && rightHandData && leftHandData.overallScore > 75 && rightHandData.overallScore > 75 ? (
+              <div>✓ Normal bilateral motor function detected</div>
+            ) : (
+              <div>⚠ Consider follow-up assessment</div>
+            )}
+            <div>• Results based on real sensor data analysis</div>
+            <div>• Consult healthcare provider for clinical interpretation</div>
           </div>
         </div>
 
         <div className="text-center space-y-4">
-          <div className="bg-gray-50 p-4 rounded-lg">
-            <h4 className="font-semibold text-gray-800 mb-2">Progressive Web App Features</h4>
-            <div className="text-sm text-gray-600">
-              This app can be installed on your iPhone home screen for offline use.
-              Real sensor data provides clinical-grade tremor analysis and motor function assessment.
-            </div>
-          </div>
-
           <button
             onClick={() => {
               setCurrentPhase('intro');
@@ -849,7 +726,7 @@ const HandMovementAssessment = () => {
               setTestTimer(10);
               tremorDataRef.current = [];
               setTremorHistory([]);
-              setPermissionGranted(false); // Reset permission for a full restart
+              setPermissionGranted(false);
             }}
             className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-semibold transition-colors"
           >
@@ -860,13 +737,13 @@ const HandMovementAssessment = () => {
     );
   };
 
-  // Main render function for the component
+  // Main render
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 py-4 px-4">
       <div className="container mx-auto">
         <div className="max-w-4xl mx-auto mb-6">
           <div className="flex justify-between items-center mb-4">
-            <span className="text-lg font-medium text-gray-700">Clinical Assessment Progress</span>
+            <span className="text-lg font-medium text-gray-700">Assessment Progress</span>
             <span className="text-lg font-medium text-gray-700">
               {phases.indexOf(currentPhase) + 1} of {phases.length}
             </span>
@@ -879,7 +756,6 @@ const HandMovementAssessment = () => {
           </div>
         </div>
 
-        {/* Render the current phase based on state */}
         {(() => {
           switch (currentPhase) {
             case 'intro':
@@ -902,6 +778,17 @@ const HandMovementAssessment = () => {
               return renderIntroduction();
           }
         })()}
+
+        {/* Debug info - remove in production */}
+        <div className="max-w-4xl mx-auto mt-4 p-4 bg-gray-100 rounded-lg text-sm">
+          <div>Current Phase: {currentPhase}</div>
+          <div>Left Hand Data: {leftHandData ? 'Available' : 'None'}</div>
+          <div>Right Hand Data: {rightHandData ? 'Available' : 'None'}</div>
+          <div>Test Running: {isTestRunning ? 'Yes' : 'No'}</div>
+          <div>Timer: {testTimer}s</div>
+          <div>Tap Count: {tapCount}</div>
+          <div>Tremor Data Points: {tremorDataRef.current.length}</div>
+        </div>
       </div>
     </div>
   );
