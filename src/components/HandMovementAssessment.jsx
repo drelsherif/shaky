@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+
 import { Activity, Hand, BarChart3, CheckCircle, Play, Timer } from 'lucide-react';
 
 // Data Models matching Swift structs
@@ -9,35 +9,73 @@ const HandType = {
   getLabel: (hand) => hand === HandType.LEFT ? 'Left' : 'Right'
 };
 
-// Tremor Analysis Component
-const TremorVisualization = ({ tremorData, tremorOffset }) => {
+// Tremor Analysis Component - matching iPhone app exactly
+const TremorVisualization = ({ tremorData, tremorOffset, isActive, onStart }) => {
   return (
-    <div className="flex flex-col items-center space-y-4">
-      <div className="relative w-48 h-48">
-        <div className="absolute inset-0 rounded-full border-4 border-gray-300"></div>
+    <div className="flex flex-col items-center space-y-6">
+      <div 
+        className="relative w-80 h-80 cursor-pointer"
+        onClick={!isActive ? onStart : undefined}
+      >
+        {/* Outer circle - gray border */}
+        <div className="absolute inset-0 rounded-full border-4 border-gray-300 bg-gray-50"></div>
+        
+        {/* Moving dot in center */}
         <div 
-          className="absolute w-5 h-5 bg-orange-500 rounded-full transition-all duration-100"
+          className={`absolute w-6 h-6 rounded-full transition-all duration-75 ${
+            isActive ? 'bg-orange-500' : 'bg-gray-400'
+          }`}
           style={{
             left: `50%`,
             top: `50%`,
             transform: `translate(-50%, -50%) translate(${tremorOffset.x}px, ${tremorOffset.y}px)`
           }}
         />
-        {!tremorData.length && (
-          <div className="absolute inset-0 flex items-center justify-center text-white font-bold text-sm">
+        
+        {/* Center cross-hairs for reference */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="w-1 h-8 bg-gray-200 absolute"></div>
+          <div className="h-1 w-8 bg-gray-200 absolute"></div>
+        </div>
+        
+        {/* Tap to start text */}
+        {!isActive && (
+          <div className="absolute inset-0 flex items-center justify-center text-gray-600 font-bold text-lg pointer-events-none">
             TAP TO START
           </div>
         )}
       </div>
       
+      {/* Real-time sensor data display */}
       {tremorData.length > 0 && (
         <div className="w-full max-w-md">
-          <div className="bg-white p-4 rounded-lg border">
-            <h4 className="font-semibold mb-2">Real-time Tremor Data</h4>
-            <div className="grid grid-cols-3 gap-2 text-xs">
-              <div>X: {tremorData[tremorData.length - 1]?.x?.toFixed(3) || '0.000'}</div>
-              <div>Y: {tremorData[tremorData.length - 1]?.y?.toFixed(3) || '0.000'}</div>
-              <div>Z: {tremorData[tremorData.length - 1]?.z?.toFixed(3) || '0.000'}</div>
+          <div className="bg-white p-4 rounded-lg border shadow">
+            <h4 className="font-semibold mb-3 text-gray-800">Real-time Motion Data</h4>
+            <div className="grid grid-cols-3 gap-4 text-sm">
+              <div className="text-center">
+                <div className="text-xs text-gray-500 mb-1">X-Axis</div>
+                <div className="font-mono font-bold">
+                  {tremorData[tremorData.length - 1]?.x?.toFixed(3) || '0.000'}
+                </div>
+              </div>
+              <div className="text-center">
+                <div className="text-xs text-gray-500 mb-1">Y-Axis</div>
+                <div className="font-mono font-bold">
+                  {tremorData[tremorData.length - 1]?.y?.toFixed(3) || '0.000'}
+                </div>
+              </div>
+              <div className="text-center">
+                <div className="text-xs text-gray-500 mb-1">Z-Axis</div>
+                <div className="font-mono font-bold">
+                  {tremorData[tremorData.length - 1]?.z?.toFixed(3) || '0.000'}
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 pt-3 border-t text-center">
+              <div className="text-xs text-gray-500 mb-1">Magnitude</div>
+              <div className="font-mono font-bold text-orange-600">
+                {tremorData[tremorData.length - 1]?.magnitude?.toFixed(4) || '0.0000'}
+              </div>
             </div>
           </div>
         </div>
@@ -75,12 +113,15 @@ const HandMovementAssessment = () => {
   const timerRef = useRef(null);
   const motionDataRef = useRef([]);
 
-  // Sensor handling
+  // Sensor handling - improved accuracy matching iPhone app
   const handleMotionEvent = (event) => {
-    const accel = event.accelerationIncludingGravity || { x: 0, y: 0, z: 0 };
+    // Use userAcceleration if available (removes gravity), otherwise use accelerationIncludingGravity
+    const accel = event.acceleration || event.accelerationIncludingGravity || { x: 0, y: 0, z: 0 };
     
     if (isTremorTestActive) {
-      const magnitude = Math.sqrt(accel.x ** 2 + accel.y ** 2 + accel.z ** 2);
+      // Calculate magnitude using proper vector math
+      const magnitude = Math.sqrt(accel.x * accel.x + accel.y * accel.y + accel.z * accel.z);
+      
       const motionPoint = {
         x: accel.x,
         y: accel.y,
@@ -91,13 +132,16 @@ const HandMovementAssessment = () => {
       
       motionDataRef.current.push(motionPoint);
       
-      // Update visual offset (scaled for visibility)
+      // Update visual offset - scaled appropriately for tremor visualization
+      // Scale factor adjusted to match iPhone app sensitivity
+      const scaleFactor = 100; // Increased for better visibility
       setTremorOffset({
-        x: accel.x * 30,
-        y: accel.y * 30
+        x: Math.max(-140, Math.min(140, accel.x * scaleFactor)), // Constrain to circle bounds
+        y: Math.max(-140, Math.min(140, accel.y * scaleFactor))
       });
       
-      setTremorData(prev => [...prev, motionPoint].slice(-100));
+      // Keep last 1000 points for better analysis (10 seconds at 100Hz)
+      setTremorData(prev => [...prev, motionPoint].slice(-1000));
     }
   };
 
@@ -243,8 +287,21 @@ const HandMovementAssessment = () => {
     }));
   };
 
-  // Analysis functions matching Swift implementation
+  // Analysis functions - improved accuracy matching Swift implementation
   const analyzeTappingData = () => {
+    if (tapTimes.length === 0) {
+      return {
+        avgFrequency: 0,
+        consistency: 0,
+        score: 0,
+        peakFrequency: 0,
+        fatigueIndex: 0,
+        rhythmStability: 0,
+        accelerationPhase: 0,
+        decelerationPhase: 0
+      };
+    }
+
     const avgFreq = tapCount / 20.0;
     const consistency = calculateConsistency();
     const peakFreq = calculatePeakFrequency();
@@ -252,29 +309,35 @@ const HandMovementAssessment = () => {
     const rhythmStability = calculateRhythmStability();
     const [accelPhase, decelPhase] = calculatePhases();
     
-    // Updated scoring - more lenient like Swift
-    const freqScore = Math.min(100, avgFreq * 12);
+    // Scoring algorithm matching Swift exactly
+    const freqScore = Math.min(100, avgFreq * 12); // Scale frequency score
     const consistencyScore = consistency * 100;
     const peakScore = Math.min(100, peakFreq * 8);
-    const fatigueScore = (1 - fatigueIndex) * 100;
+    const fatigueScore = Math.max(0, (1 - fatigueIndex) * 100);
     
-    const score = (freqScore * 0.3 + consistencyScore * 0.25 + peakScore * 0.25 + fatigueScore * 0.2);
+    // Weighted average matching Swift weights
+    const score = Math.max(0, Math.min(100, 
+      (freqScore * 0.3) + 
+      (consistencyScore * 0.25) + 
+      (peakScore * 0.25) + 
+      (fatigueScore * 0.2)
+    ));
     
     return {
-      avgFrequency: avgFreq,
-      consistency,
-      score,
-      peakFrequency: peakFreq,
-      fatigueIndex,
-      rhythmStability,
-      accelerationPhase: accelPhase,
-      decelerationPhase: decelPhase
+      avgFrequency: parseFloat(avgFreq.toFixed(2)),
+      consistency: parseFloat(consistency.toFixed(3)),
+      score: parseFloat(score.toFixed(1)),
+      peakFrequency: parseFloat(peakFreq.toFixed(2)),
+      fatigueIndex: parseFloat(fatigueIndex.toFixed(3)),
+      rhythmStability: parseFloat(rhythmStability.toFixed(3)),
+      accelerationPhase: parseFloat(accelPhase.toFixed(2)),
+      decelerationPhase: parseFloat(decelPhase.toFixed(2))
     };
   };
 
   const analyzeTremorData = () => {
     const data = motionDataRef.current;
-    if (!data.length) {
+    if (!data || data.length < 10) {
       return {
         frequency: 0,
         amplitude: 0,
@@ -289,45 +352,60 @@ const HandMovementAssessment = () => {
       };
     }
     
+    // Separate per-axis analysis
     const xData = data.map(d => Math.abs(d.x));
     const yData = data.map(d => Math.abs(d.y));
     const zData = data.map(d => Math.abs(d.z));
     
+    // Calculate per-axis mean amplitudes
     const xAxisAmp = xData.reduce((sum, val) => sum + val, 0) / xData.length;
     const yAxisAmp = yData.reduce((sum, val) => sum + val, 0) / yData.length;
     const zAxisAmp = zData.reduce((sum, val) => sum + val, 0) / zData.length;
     
-    const dominantAxis = xAxisAmp >= yAxisAmp && xAxisAmp >= zAxisAmp ? 'X (Side-to-side)' :
-                        yAxisAmp >= zAxisAmp ? 'Y (Forward-back)' : 'Z (Up-down)';
+    // Determine dominant axis
+    let dominantAxis = 'X (Side-to-side)';
+    if (yAxisAmp >= xAxisAmp && yAxisAmp >= zAxisAmp) {
+      dominantAxis = 'Y (Forward-back)';
+    } else if (zAxisAmp >= xAxisAmp && zAxisAmp >= yAxisAmp) {
+      dominantAxis = 'Z (Up-down)';
+    }
     
+    // Calculate overall metrics using magnitude
     const magnitudes = data.map(d => d.magnitude);
     const amplitude = magnitudes.reduce((sum, val) => sum + val, 0) / magnitudes.length;
     const maxAmplitude = Math.max(...magnitudes);
     const amplitudeVariability = calculateAmplitudeVariability(magnitudes);
     const frequency = estimateFrequency(magnitudes);
     
-    // Severity classification matching Swift
-    const severity = amplitude < 0.02 ? 'None' :
-                    amplitude < 0.04 ? 'Minimal' :
-                    amplitude < 0.08 ? 'Mild' :
-                    amplitude < 0.15 ? 'Moderate' :
-                    amplitude < 0.25 ? 'Severe' : 'Very Severe';
+    // Severity classification matching Swift exactly
+    let severity = 'None';
+    if (amplitude >= 0.25) {
+      severity = 'Very Severe';
+    } else if (amplitude >= 0.15) {
+      severity = 'Severe';
+    } else if (amplitude >= 0.08) {
+      severity = 'Moderate';
+    } else if (amplitude >= 0.04) {
+      severity = 'Mild';
+    } else if (amplitude >= 0.02) {
+      severity = 'Minimal';
+    }
     
     return {
-      frequency,
-      amplitude,
+      frequency: parseFloat(frequency.toFixed(2)),
+      amplitude: parseFloat(amplitude.toFixed(4)),
       severity,
-      xAxisAmplitude: xAxisAmp,
-      yAxisAmplitude: yAxisAmp,
-      zAxisAmplitude: zAxisAmp,
+      xAxisAmplitude: parseFloat(xAxisAmp.toFixed(4)),
+      yAxisAmplitude: parseFloat(yAxisAmp.toFixed(4)),
+      zAxisAmplitude: parseFloat(zAxisAmp.toFixed(4)),
       dominantAxis,
-      tremorsPerSecond: frequency,
-      maxAmplitude,
-      amplitudeVariability
+      tremorsPerSecond: parseFloat(frequency.toFixed(2)),
+      maxAmplitude: parseFloat(maxAmplitude.toFixed(4)),
+      amplitudeVariability: parseFloat(amplitudeVariability.toFixed(4))
     };
   };
 
-  // Helper functions
+  // Helper functions - improved accuracy
   const calculateConsistency = () => {
     if (tapTimes.length < 2) return 0;
     
@@ -336,28 +414,31 @@ const HandMovementAssessment = () => {
       intervals.push(tapTimes[i] - tapTimes[i - 1]);
     }
     
+    if (intervals.length === 0) return 0;
+    
     const mean = intervals.reduce((sum, val) => sum + val, 0) / intervals.length;
+    if (mean === 0) return 0;
+    
     const variance = intervals.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / intervals.length;
     const stdDev = Math.sqrt(variance);
     
-    return Math.max(0, 1 - (stdDev / mean));
+    return Math.max(0, Math.min(1, 1 - (stdDev / mean)));
   };
 
   const calculatePeakFrequency = () => {
     if (tapTimes.length < 3) return 0;
     
     let maxFreq = 0;
-    const windowSize = 3.0;
+    const windowSize = 3.0; // 3-second sliding window
     
     for (let i = 0; i < tapTimes.length; i++) {
       const windowStart = tapTimes[i];
       const windowEnd = windowStart + windowSize;
       
       const tapsInWindow = tapTimes.filter(t => t >= windowStart && t <= windowEnd).length;
-      const freq = tapsInWindow / windowSize;
-      
-      if (freq > maxFreq) {
-        maxFreq = freq;
+      if (tapsInWindow > 1) { // Need at least 2 taps for frequency calculation
+        const freq = tapsInWindow / windowSize;
+        maxFreq = Math.max(maxFreq, freq);
       }
     }
     
@@ -368,15 +449,24 @@ const HandMovementAssessment = () => {
     if (tapTimes.length < 6) return 0;
     
     const thirdSize = Math.floor(tapTimes.length / 3);
+    if (thirdSize < 2) return 0;
+    
     const firstThird = tapTimes.slice(0, thirdSize);
     const lastThird = tapTimes.slice(-thirdSize);
     
     if (firstThird.length === 0 || lastThird.length === 0) return 0;
     
-    const firstFreq = firstThird.length / (firstThird[firstThird.length - 1] - firstThird[0]);
-    const lastFreq = lastThird.length / (lastThird[lastThird.length - 1] - lastThird[0]);
+    const firstDuration = firstThird[firstThird.length - 1] - firstThird[0];
+    const lastDuration = lastThird[lastThird.length - 1] - lastThird[0];
     
-    return Math.max(0, (firstFreq - lastFreq) / firstFreq);
+    if (firstDuration === 0 || lastDuration === 0) return 0;
+    
+    const firstFreq = (firstThird.length - 1) / firstDuration; // -1 because intervals = taps - 1
+    const lastFreq = (lastThird.length - 1) / lastDuration;
+    
+    if (firstFreq === 0) return 0;
+    
+    return Math.max(0, Math.min(1, (firstFreq - lastFreq) / firstFreq));
   };
 
   const calculateRhythmStability = () => {
@@ -387,10 +477,15 @@ const HandMovementAssessment = () => {
       intervals.push(tapTimes[i] - tapTimes[i - 1]);
     }
     
-    const mean = intervals.reduce((sum, val) => sum + val, 0) / intervals.length;
-    const variance = intervals.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / intervals.length;
+    if (intervals.length === 0) return 0;
     
-    return Math.max(0, 1 - Math.sqrt(variance) / mean);
+    const mean = intervals.reduce((sum, val) => sum + val, 0) / intervals.length;
+    if (mean === 0) return 0;
+    
+    const variance = intervals.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / intervals.length;
+    const stability = Math.max(0, Math.min(1, 1 - (Math.sqrt(variance) / mean)));
+    
+    return stability;
   };
 
   const calculatePhases = () => {
@@ -399,17 +494,28 @@ const HandMovementAssessment = () => {
     let peakIndex = 0;
     let maxLocalFreq = 0;
     
+    // Find peak frequency using sliding window
     for (let i = 2; i < tapTimes.length - 2; i++) {
-      const localTaps = tapTimes.slice(i - 2, i + 3);
-      const localFreq = localTaps.length / (localTaps[localTaps.length - 1] - localTaps[0]);
+      const windowStart = Math.max(0, i - 2);
+      const windowEnd = Math.min(tapTimes.length - 1, i + 2);
+      const localTaps = tapTimes.slice(windowStart, windowEnd + 1);
       
-      if (localFreq > maxLocalFreq) {
-        maxLocalFreq = localFreq;
-        peakIndex = i;
+      if (localTaps.length > 1) {
+        const duration = localTaps[localTaps.length - 1] - localTaps[0];
+        if (duration > 0) {
+          const localFreq = (localTaps.length - 1) / duration;
+          if (localFreq > maxLocalFreq) {
+            maxLocalFreq = localFreq;
+            peakIndex = i;
+          }
+        }
       }
     }
     
-    return [tapTimes[peakIndex], 20.0 - tapTimes[peakIndex]];
+    const accelerationPhase = tapTimes[peakIndex] || 0;
+    const decelerationPhase = 20.0 - accelerationPhase;
+    
+    return [accelerationPhase, Math.max(0, decelerationPhase)];
   };
 
   const calculateAmplitudeVariability = (magnitudes) => {
@@ -422,11 +528,13 @@ const HandMovementAssessment = () => {
   };
 
   const estimateFrequency = (data) => {
-    if (data.length < 10) return 0;
+    if (data.length < 20) return 0; // Need sufficient data points
     
+    // Remove DC component (mean)
     const mean = data.reduce((sum, val) => sum + val, 0) / data.length;
     const centered = data.map(val => val - mean);
     
+    // Count zero crossings
     let crossings = 0;
     for (let i = 1; i < centered.length; i++) {
       if ((centered[i - 1] > 0 && centered[i] <= 0) || (centered[i - 1] <= 0 && centered[i] > 0)) {
@@ -434,8 +542,12 @@ const HandMovementAssessment = () => {
       }
     }
     
-    const samplingRate = 100.0;
-    return (crossings / 2.0) / (data.length / samplingRate);
+    // Calculate frequency (crossings/2 = full cycles)
+    const samplingRate = 100.0; // Assuming 100Hz sampling (0.01s intervals)
+    const duration = data.length / samplingRate;
+    const frequency = (crossings / 2.0) / duration;
+    
+    return Math.max(0, frequency);
   };
 
   const getGrade = (score) => {
@@ -594,27 +706,43 @@ const HandMovementAssessment = () => {
         )}
       </div>
 
-      <div className="text-center mb-8">
+      {/* Large circular tap button matching iPhone app exactly */}
+      <div className="flex justify-center mb-8">
         <button
           onClick={isTestActive ? handleTap : () => startTappingTest(currentHand)}
-          className={`w-48 h-48 rounded-full text-3xl font-bold transition-all ${
+          className={`w-80 h-80 rounded-full text-4xl font-bold transition-all duration-150 shadow-2xl ${
             isTestActive 
-              ? 'bg-green-600 hover:bg-green-700 text-white' 
-              : 'bg-blue-600 hover:bg-blue-700 text-white'
+              ? 'bg-green-600 hover:bg-green-700 active:bg-green-800 text-white scale-100 hover:scale-105 active:scale-95' 
+              : 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white scale-100 hover:scale-105 active:scale-95'
           }`}
+          style={{
+            touchAction: 'manipulation',
+            userSelect: 'none',
+            WebkitUserSelect: 'none',
+            WebkitTouchCallout: 'none'
+          }}
         >
-          {isTestActive ? tapCount : 'START'}
+          <div className="flex flex-col items-center justify-center">
+            {isTestActive ? (
+              <>
+                <div className="text-6xl font-bold mb-2">{tapCount}</div>
+                <div className="text-lg">TAPS</div>
+              </>
+            ) : (
+              <div className="text-3xl">START</div>
+            )}
+          </div>
         </button>
       </div>
 
       {isTestActive && (
         <div className="text-center space-y-4">
-          <p className="text-lg">
+          <p className="text-xl font-semibold text-blue-600">
             Frequency: {currentFrequency.toFixed(1)} taps/sec
           </p>
-          <div className="w-full bg-gray-200 rounded-full h-4">
+          <div className="w-full max-w-md mx-auto bg-gray-200 rounded-full h-4">
             <div 
-              className="bg-blue-600 h-4 rounded-full transition-all"
+              className="bg-blue-600 h-4 rounded-full transition-all duration-300"
               style={{ width: `${((20 - timeRemaining) / 20) * 100}%` }}
             />
           </div>
@@ -641,22 +769,22 @@ const HandMovementAssessment = () => {
       </div>
 
       <div className="text-center mb-8">
-        <div onClick={isTremorTestActive ? undefined : () => startTremorTest(currentHand)}>
-          <TremorVisualization 
-            tremorData={tremorData} 
-            tremorOffset={tremorOffset}
-          />
-        </div>
+        <TremorVisualization 
+          tremorData={tremorData} 
+          tremorOffset={tremorOffset}
+          isActive={isTremorTestActive}
+          onStart={() => startTremorTest(currentHand)}
+        />
       </div>
 
       {isTremorTestActive && (
         <div className="text-center space-y-4">
-          <p className="text-lg text-orange-600">
+          <p className="text-xl font-semibold text-orange-600">
             Keep phone as steady as possible
           </p>
-          <div className="w-full bg-gray-200 rounded-full h-4">
+          <div className="w-full max-w-md mx-auto bg-gray-200 rounded-full h-4">
             <div 
-              className="bg-orange-600 h-4 rounded-full transition-all"
+              className="bg-orange-600 h-4 rounded-full transition-all duration-300"
               style={{ width: `${((10 - tremorTimeRemaining) / 10) * 100}%` }}
             />
           </div>
