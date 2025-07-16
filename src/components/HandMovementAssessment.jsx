@@ -1,5 +1,5 @@
-
-import { Activity, Hand, BarChart3, CheckCircle, Play, Timer } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Activity, Hand, BarChart3, CheckCircle, Play } from 'lucide-react';
 
 // Data Models matching Swift structs
 const HandType = {
@@ -13,15 +13,15 @@ const HandType = {
 const TremorVisualization = ({ tremorData, tremorOffset, isActive, onStart }) => {
   return (
     <div className="flex flex-col items-center space-y-6">
-      <div 
+      <div
         className="relative w-80 h-80 cursor-pointer"
         onClick={!isActive ? onStart : undefined}
       >
         {/* Outer circle - gray border */}
         <div className="absolute inset-0 rounded-full border-4 border-gray-300 bg-gray-50"></div>
-        
+
         {/* Moving dot in center */}
-        <div 
+        <div
           className={`absolute w-6 h-6 rounded-full transition-all duration-75 ${
             isActive ? 'bg-orange-500' : 'bg-gray-400'
           }`}
@@ -31,13 +31,13 @@ const TremorVisualization = ({ tremorData, tremorOffset, isActive, onStart }) =>
             transform: `translate(-50%, -50%) translate(${tremorOffset.x}px, ${tremorOffset.y}px)`
           }}
         />
-        
+
         {/* Center cross-hairs for reference */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="w-1 h-8 bg-gray-200 absolute"></div>
           <div className="h-1 w-8 bg-gray-200 absolute"></div>
         </div>
-        
+
         {/* Tap to start text */}
         {!isActive && (
           <div className="absolute inset-0 flex items-center justify-center text-gray-600 font-bold text-lg pointer-events-none">
@@ -45,7 +45,7 @@ const TremorVisualization = ({ tremorData, tremorOffset, isActive, onStart }) =>
           </div>
         )}
       </div>
-      
+
       {/* Real-time sensor data display */}
       {tremorData.length > 0 && (
         <div className="w-full max-w-md">
@@ -95,7 +95,7 @@ const HandMovementAssessment = () => {
   const [tremorTimeRemaining, setTremorTimeRemaining] = useState(10);
   const [currentFrequency, setCurrentFrequency] = useState(0);
   const [tremorOffset, setTremorOffset] = useState({ x: 0, y: 0 });
-  
+
   // Results storage
   const [session, setSession] = useState({
     leftTapping: null,
@@ -103,25 +103,25 @@ const HandMovementAssessment = () => {
     leftTremor: null,
     rightTremor: null
   });
-  
+
   // Test data
   const [tapTimes, setTapTimes] = useState([]);
   const [tremorData, setTremorData] = useState([]);
   const [testStartTime, setTestStartTime] = useState(null);
   const [permissionGranted, setPermissionGranted] = useState(false);
-  
+
   const timerRef = useRef(null);
   const motionDataRef = useRef([]);
 
-  // Sensor handling - improved accuracy matching iPhone app
-  const handleMotionEvent = (event) => {
+  // Sensor handling - using useCallback to prevent recreating event handlers
+  const handleMotionEvent = useCallback((event) => {
     // Use userAcceleration if available (removes gravity), otherwise use accelerationIncludingGravity
     const accel = event.acceleration || event.accelerationIncludingGravity || { x: 0, y: 0, z: 0 };
-    
+
     if (isTremorTestActive) {
       // Calculate magnitude using proper vector math
       const magnitude = Math.sqrt(accel.x * accel.x + accel.y * accel.y + accel.z * accel.z);
-      
+
       const motionPoint = {
         x: accel.x,
         y: accel.y,
@@ -129,9 +129,9 @@ const HandMovementAssessment = () => {
         magnitude,
         timestamp: Date.now()
       };
-      
+
       motionDataRef.current.push(motionPoint);
-      
+
       // Update visual offset - scaled appropriately for tremor visualization
       // Scale factor adjusted to match iPhone app sensitivity
       const scaleFactor = 100; // Increased for better visibility
@@ -139,37 +139,37 @@ const HandMovementAssessment = () => {
         x: Math.max(-140, Math.min(140, accel.x * scaleFactor)), // Constrain to circle bounds
         y: Math.max(-140, Math.min(140, accel.y * scaleFactor))
       });
-      
+
       // Keep last 1000 points for better analysis (10 seconds at 100Hz)
       setTremorData(prev => [...prev, motionPoint].slice(-1000));
     }
-  };
+  }, [isTremorTestActive]);
 
-  // Permission handling
-  const requestSensorPermissions = async () => {
+  // Permission handling with better error handling
+  const requestSensorPermissions = useCallback(async () => {
     try {
       let granted = false;
-      
+
       if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
         const permission = await DeviceMotionEvent.requestPermission();
         granted = permission === 'granted';
       } else {
         granted = true;
       }
-      
+
       setPermissionGranted(granted);
-      
+
       if (granted) {
-        window.addEventListener('devicemotion', handleMotionEvent);
+        window.addEventListener('devicemotion', handleMotionEvent, { passive: true });
       }
-      
+
       return granted;
     } catch (error) {
       console.error('Permission request failed:', error);
       setPermissionGranted(true);
       return true;
     }
-  };
+  }, [handleMotionEvent]);
 
   // Tapping test functions
   const startTappingTest = (hand) => {
@@ -179,7 +179,7 @@ const HandMovementAssessment = () => {
     setTapTimes([]);
     setCurrentFrequency(0);
     setTestStartTime(Date.now());
-    
+
     timerRef.current = setInterval(() => {
       setTimeRemaining(prev => {
         const newTime = prev - 0.1;
@@ -194,10 +194,10 @@ const HandMovementAssessment = () => {
 
   const handleTap = () => {
     if (!isTestActive || timeRemaining <= 0) return;
-    
+
     const newTapCount = tapCount + 1;
     setTapCount(newTapCount);
-    
+
     if (testStartTime) {
       const currentTime = (Date.now() - testStartTime) / 1000;
       setTapTimes(prev => [...prev, currentTime]);
@@ -210,10 +210,10 @@ const HandMovementAssessment = () => {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    
+
     setIsTestActive(false);
     const analysis = analyzeTappingData();
-    
+
     const result = {
       hand,
       tapCount,
@@ -228,7 +228,7 @@ const HandMovementAssessment = () => {
       decelerationPhase: analysis.decelerationPhase,
       grade: getGrade(analysis.score)
     };
-    
+
     setSession(prev => ({
       ...prev,
       [`${hand}Tapping`]: result
@@ -242,7 +242,7 @@ const HandMovementAssessment = () => {
     setTremorData([]);
     setTremorOffset({ x: 0, y: 0 });
     motionDataRef.current = [];
-    
+
     timerRef.current = setInterval(() => {
       setTremorTimeRemaining(prev => {
         const newTime = prev - 0.1;
@@ -260,12 +260,12 @@ const HandMovementAssessment = () => {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    
+
     setIsTremorTestActive(false);
     setTremorOffset({ x: 0, y: 0 });
-    
+
     const analysis = analyzeTremorData();
-    
+
     const result = {
       hand,
       frequency: analysis.frequency,
@@ -280,7 +280,7 @@ const HandMovementAssessment = () => {
       amplitudeVariability: analysis.amplitudeVariability,
       hasTremor: analysis.amplitude > 0.02
     };
-    
+
     setSession(prev => ({
       ...prev,
       [`${hand}Tremor`]: result
@@ -308,21 +308,21 @@ const HandMovementAssessment = () => {
     const fatigueIndex = calculateFatigueIndex();
     const rhythmStability = calculateRhythmStability();
     const [accelPhase, decelPhase] = calculatePhases();
-    
+
     // Scoring algorithm matching Swift exactly
     const freqScore = Math.min(100, avgFreq * 12); // Scale frequency score
     const consistencyScore = consistency * 100;
     const peakScore = Math.min(100, peakFreq * 8);
     const fatigueScore = Math.max(0, (1 - fatigueIndex) * 100);
-    
+
     // Weighted average matching Swift weights
-    const score = Math.max(0, Math.min(100, 
-      (freqScore * 0.3) + 
-      (consistencyScore * 0.25) + 
-      (peakScore * 0.25) + 
+    const score = Math.max(0, Math.min(100,
+      (freqScore * 0.3) +
+      (consistencyScore * 0.25) +
+      (peakScore * 0.25) +
       (fatigueScore * 0.2)
     ));
-    
+
     return {
       avgFrequency: parseFloat(avgFreq.toFixed(2)),
       consistency: parseFloat(consistency.toFixed(3)),
@@ -351,17 +351,17 @@ const HandMovementAssessment = () => {
         amplitudeVariability: 0
       };
     }
-    
+
     // Separate per-axis analysis
     const xData = data.map(d => Math.abs(d.x));
     const yData = data.map(d => Math.abs(d.y));
     const zData = data.map(d => Math.abs(d.z));
-    
+
     // Calculate per-axis mean amplitudes
     const xAxisAmp = xData.reduce((sum, val) => sum + val, 0) / xData.length;
     const yAxisAmp = yData.reduce((sum, val) => sum + val, 0) / yData.length;
     const zAxisAmp = zData.reduce((sum, val) => sum + val, 0) / zData.length;
-    
+
     // Determine dominant axis
     let dominantAxis = 'X (Side-to-side)';
     if (yAxisAmp >= xAxisAmp && yAxisAmp >= zAxisAmp) {
@@ -369,14 +369,14 @@ const HandMovementAssessment = () => {
     } else if (zAxisAmp >= xAxisAmp && zAxisAmp >= yAxisAmp) {
       dominantAxis = 'Z (Up-down)';
     }
-    
+
     // Calculate overall metrics using magnitude
     const magnitudes = data.map(d => d.magnitude);
     const amplitude = magnitudes.reduce((sum, val) => sum + val, 0) / magnitudes.length;
     const maxAmplitude = Math.max(...magnitudes);
     const amplitudeVariability = calculateAmplitudeVariability(magnitudes);
     const frequency = estimateFrequency(magnitudes);
-    
+
     // Severity classification matching Swift exactly
     let severity = 'None';
     if (amplitude >= 0.25) {
@@ -390,7 +390,7 @@ const HandMovementAssessment = () => {
     } else if (amplitude >= 0.02) {
       severity = 'Minimal';
     }
-    
+
     return {
       frequency: parseFloat(frequency.toFixed(2)),
       amplitude: parseFloat(amplitude.toFixed(4)),
@@ -408,98 +408,98 @@ const HandMovementAssessment = () => {
   // Helper functions - improved accuracy
   const calculateConsistency = () => {
     if (tapTimes.length < 2) return 0;
-    
+
     const intervals = [];
     for (let i = 1; i < tapTimes.length; i++) {
       intervals.push(tapTimes[i] - tapTimes[i - 1]);
     }
-    
+
     if (intervals.length === 0) return 0;
-    
+
     const mean = intervals.reduce((sum, val) => sum + val, 0) / intervals.length;
     if (mean === 0) return 0;
-    
+
     const variance = intervals.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / intervals.length;
     const stdDev = Math.sqrt(variance);
-    
+
     return Math.max(0, Math.min(1, 1 - (stdDev / mean)));
   };
 
   const calculatePeakFrequency = () => {
     if (tapTimes.length < 3) return 0;
-    
+
     let maxFreq = 0;
     const windowSize = 3.0; // 3-second sliding window
-    
+
     for (let i = 0; i < tapTimes.length; i++) {
       const windowStart = tapTimes[i];
       const windowEnd = windowStart + windowSize;
-      
+
       const tapsInWindow = tapTimes.filter(t => t >= windowStart && t <= windowEnd).length;
       if (tapsInWindow > 1) { // Need at least 2 taps for frequency calculation
         const freq = tapsInWindow / windowSize;
         maxFreq = Math.max(maxFreq, freq);
       }
     }
-    
+
     return maxFreq;
   };
 
   const calculateFatigueIndex = () => {
     if (tapTimes.length < 6) return 0;
-    
+
     const thirdSize = Math.floor(tapTimes.length / 3);
     if (thirdSize < 2) return 0;
-    
+
     const firstThird = tapTimes.slice(0, thirdSize);
     const lastThird = tapTimes.slice(-thirdSize);
-    
+
     if (firstThird.length === 0 || lastThird.length === 0) return 0;
-    
+
     const firstDuration = firstThird[firstThird.length - 1] - firstThird[0];
     const lastDuration = lastThird[lastThird.length - 1] - lastThird[0];
-    
+
     if (firstDuration === 0 || lastDuration === 0) return 0;
-    
+
     const firstFreq = (firstThird.length - 1) / firstDuration; // -1 because intervals = taps - 1
     const lastFreq = (lastThird.length - 1) / lastDuration;
-    
+
     if (firstFreq === 0) return 0;
-    
+
     return Math.max(0, Math.min(1, (firstFreq - lastFreq) / firstFreq));
   };
 
   const calculateRhythmStability = () => {
     if (tapTimes.length < 3) return 0;
-    
+
     const intervals = [];
     for (let i = 1; i < tapTimes.length; i++) {
       intervals.push(tapTimes[i] - tapTimes[i - 1]);
     }
-    
+
     if (intervals.length === 0) return 0;
-    
+
     const mean = intervals.reduce((sum, val) => sum + val, 0) / intervals.length;
     if (mean === 0) return 0;
-    
+
     const variance = intervals.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / intervals.length;
     const stability = Math.max(0, Math.min(1, 1 - (Math.sqrt(variance) / mean)));
-    
+
     return stability;
   };
 
   const calculatePhases = () => {
     if (tapTimes.length < 5) return [0, 0];
-    
+
     let peakIndex = 0;
     let maxLocalFreq = 0;
-    
+
     // Find peak frequency using sliding window
     for (let i = 2; i < tapTimes.length - 2; i++) {
       const windowStart = Math.max(0, i - 2);
       const windowEnd = Math.min(tapTimes.length - 1, i + 2);
       const localTaps = tapTimes.slice(windowStart, windowEnd + 1);
-      
+
       if (localTaps.length > 1) {
         const duration = localTaps[localTaps.length - 1] - localTaps[0];
         if (duration > 0) {
@@ -511,29 +511,29 @@ const HandMovementAssessment = () => {
         }
       }
     }
-    
+
     const accelerationPhase = tapTimes[peakIndex] || 0;
     const decelerationPhase = 20.0 - accelerationPhase;
-    
+
     return [accelerationPhase, Math.max(0, decelerationPhase)];
   };
 
   const calculateAmplitudeVariability = (magnitudes) => {
     if (magnitudes.length < 2) return 0;
-    
+
     const mean = magnitudes.reduce((sum, val) => sum + val, 0) / magnitudes.length;
     const variance = magnitudes.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / magnitudes.length;
-    
+
     return Math.sqrt(variance);
   };
 
   const estimateFrequency = (data) => {
     if (data.length < 20) return 0; // Need sufficient data points
-    
+
     // Remove DC component (mean)
     const mean = data.reduce((sum, val) => sum + val, 0) / data.length;
     const centered = data.map(val => val - mean);
-    
+
     // Count zero crossings
     let crossings = 0;
     for (let i = 1; i < centered.length; i++) {
@@ -541,12 +541,12 @@ const HandMovementAssessment = () => {
         crossings++;
       }
     }
-    
+
     // Calculate frequency (crossings/2 = full cycles)
     const samplingRate = 100.0; // Assuming 100Hz sampling (0.01s intervals)
     const duration = data.length / samplingRate;
     const frequency = (crossings / 2.0) / duration;
-    
+
     return Math.max(0, frequency);
   };
 
@@ -565,33 +565,33 @@ const HandMovementAssessment = () => {
     return 'text-red-600';
   };
 
-  // Navigation functions
-  const startTest = async () => {
+  // Navigation functions with useCallback for performance
+  const startTest = useCallback(async () => {
     if (!permissionGranted) {
       await requestSensorPermissions();
     }
     setCurrentHand(HandType.LEFT);
     setCurrentView('tapping');
-  };
+  }, [permissionGranted, requestSensorPermissions]);
 
-  const proceedToTremor = () => {
+  const proceedToTremor = useCallback(() => {
     setCurrentView('tremor');
-  };
+  }, []);
 
-  const showHandResults = () => {
+  const showHandResults = useCallback(() => {
     setCurrentView('results');
-  };
+  }, []);
 
-  const proceedToNextStep = () => {
+  const proceedToNextStep = useCallback(() => {
     if (currentHand === HandType.LEFT) {
       setCurrentHand(HandType.RIGHT);
       setCurrentView('tapping');
     } else {
       setCurrentView('finalResults');
     }
-  };
+  }, [currentHand]);
 
-  const restartTest = () => {
+  const restartTest = useCallback(() => {
     setSession({
       leftTapping: null,
       rightTapping: null,
@@ -610,9 +610,9 @@ const HandMovementAssessment = () => {
     setTapTimes([]);
     setTremorData([]);
     motionDataRef.current = [];
-  };
+  }, []);
 
-  // Cleanup
+  // Cleanup effect with proper dependency handling
   useEffect(() => {
     return () => {
       if (timerRef.current) {
@@ -620,20 +620,20 @@ const HandMovementAssessment = () => {
       }
       window.removeEventListener('devicemotion', handleMotionEvent);
     };
-  }, []);
+  }, [handleMotionEvent]);
 
   // Auto-proceed after test completion
   useEffect(() => {
     if (!isTestActive && timeRemaining === 0 && currentView === 'tapping') {
       setTimeout(proceedToTremor, 1000);
     }
-  }, [isTestActive, timeRemaining, currentView]);
+  }, [isTestActive, timeRemaining, currentView, proceedToTremor]); // Added proceedToTremor to dependencies
 
   useEffect(() => {
     if (!isTremorTestActive && tremorTimeRemaining === 0 && currentView === 'tremor') {
       setTimeout(showHandResults, 1000);
     }
-  }, [isTremorTestActive, tremorTimeRemaining, currentView]);
+  }, [isTremorTestActive, tremorTimeRemaining, currentView, showHandResults]); // Added showHandResults to dependencies
 
   // Render components
   const renderWelcome = () => (
@@ -656,7 +656,7 @@ const HandMovementAssessment = () => {
             <p className="text-gray-600">Tap as fast as you can for 20 seconds</p>
           </div>
         </div>
-        
+
         <div className="flex items-center p-4 bg-orange-50 rounded-lg">
           <div className="w-8 h-8 bg-orange-600 text-white rounded-full flex items-center justify-center font-bold mr-4">
             2
@@ -666,7 +666,7 @@ const HandMovementAssessment = () => {
             <p className="text-gray-600">Hold phone steady for 10 seconds</p>
           </div>
         </div>
-        
+
         <div className="flex items-center p-4 bg-green-50 rounded-lg">
           <div className="w-8 h-8 bg-green-600 text-white rounded-full flex items-center justify-center font-bold mr-4">
             3
@@ -696,7 +696,7 @@ const HandMovementAssessment = () => {
           {HandType.getEmoji(currentHand)} {HandType.getLabel(currentHand)} Hand
         </h2>
         <h3 className="text-xl text-gray-600 mb-4">Finger Tapping Test</h3>
-        
+
         {isTestActive ? (
           <div className="text-6xl font-bold text-blue-600 mb-4">
             {Math.ceil(timeRemaining)}
@@ -711,8 +711,8 @@ const HandMovementAssessment = () => {
         <button
           onClick={isTestActive ? handleTap : () => startTappingTest(currentHand)}
           className={`w-80 h-80 rounded-full text-4xl font-bold transition-all duration-150 shadow-2xl ${
-            isTestActive 
-              ? 'bg-green-600 hover:bg-green-700 active:bg-green-800 text-white scale-100 hover:scale-105 active:scale-95' 
+            isTestActive
+              ? 'bg-green-600 hover:bg-green-700 active:bg-green-800 text-white scale-100 hover:scale-105 active:scale-95'
               : 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white scale-100 hover:scale-105 active:scale-95'
           }`}
           style={{
@@ -741,7 +741,7 @@ const HandMovementAssessment = () => {
             Frequency: {currentFrequency.toFixed(1)} taps/sec
           </p>
           <div className="w-full max-w-md mx-auto bg-gray-200 rounded-full h-4">
-            <div 
+            <div
               className="bg-blue-600 h-4 rounded-full transition-all duration-300"
               style={{ width: `${((20 - timeRemaining) / 20) * 100}%` }}
             />
@@ -758,7 +758,7 @@ const HandMovementAssessment = () => {
           {HandType.getEmoji(currentHand)} {HandType.getLabel(currentHand)} Hand
         </h2>
         <h3 className="text-xl text-gray-600 mb-4">Tremor Analysis</h3>
-        
+
         {isTremorTestActive ? (
           <div className="text-6xl font-bold text-orange-600 mb-4">
             {Math.ceil(tremorTimeRemaining)}
@@ -769,8 +769,8 @@ const HandMovementAssessment = () => {
       </div>
 
       <div className="text-center mb-8">
-        <TremorVisualization 
-          tremorData={tremorData} 
+        <TremorVisualization
+          tremorData={tremorData}
           tremorOffset={tremorOffset}
           isActive={isTremorTestActive}
           onStart={() => startTremorTest(currentHand)}
@@ -783,7 +783,7 @@ const HandMovementAssessment = () => {
             Keep phone as steady as possible
           </p>
           <div className="w-full max-w-md mx-auto bg-gray-200 rounded-full h-4">
-            <div 
+            <div
               className="bg-orange-600 h-4 rounded-full transition-all duration-300"
               style={{ width: `${((10 - tremorTimeRemaining) / 10) * 100}%` }}
             />
@@ -796,7 +796,7 @@ const HandMovementAssessment = () => {
   const renderResults = () => {
     const tapping = session[`${currentHand}Tapping`];
     const tremor = session[`${currentHand}Tremor`];
-    
+
     return (
       <div className="max-w-4xl mx-auto p-8 bg-white rounded-lg shadow-lg">
         <div className="text-center mb-8">
@@ -876,21 +876,21 @@ const HandMovementAssessment = () => {
     const rightTapping = session.rightTapping;
     const leftTremor = session.leftTremor;
     const rightTremor = session.rightTremor;
-    
-    const dominantHand = leftTapping && rightTapping ? 
+
+    const dominantHand = leftTapping && rightTapping ?
       (leftTapping.score > rightTapping.score ? 'Left' : 'Right') : 'Unknown';
-    
+
     const getOverallStatus = () => {
       if (!leftTapping || !rightTapping || !leftTremor || !rightTremor) return 'Incomplete';
-      
+
       const avgScore = (leftTapping.score + rightTapping.score) / 2;
       const hasTremor = leftTremor.hasTremor || rightTremor.hasTremor;
-      
+
       if (avgScore >= 70 && !hasTremor) return 'Normal';
       if (avgScore >= 50 && !hasTremor) return 'Mild Issues';
       return 'Needs Attention';
     };
-    
+
     const getOverallStatusColor = () => {
       const status = getOverallStatus();
       switch (status) {
@@ -899,24 +899,24 @@ const HandMovementAssessment = () => {
         default: return 'text-red-600';
       }
     };
-    
+
     const getRecommendations = () => {
       const recommendations = [];
-      
+
       if (leftTapping && leftTapping.score < 40) {
         recommendations.push(`Left hand motor function shows impairment (Score: ${leftTapping.score.toFixed(0)})`);
       }
       if (rightTapping && rightTapping.score < 40) {
         recommendations.push(`Right hand motor function shows impairment (Score: ${rightTapping.score.toFixed(0)})`);
       }
-      
+
       if (leftTremor && leftTremor.hasTremor) {
         recommendations.push(`Left hand tremor detected (${leftTremor.severity} - ${leftTremor.amplitude.toFixed(4)}g)`);
       }
       if (rightTremor && rightTremor.hasTremor) {
         recommendations.push(`Right hand tremor detected (${rightTremor.severity} - ${rightTremor.amplitude.toFixed(4)}g)`);
       }
-      
+
       // Fatigue analysis
       if (leftTapping && leftTapping.fatigueIndex > 0.3) {
         recommendations.push('Left hand shows significant fatigue during testing');
@@ -924,7 +924,7 @@ const HandMovementAssessment = () => {
       if (rightTapping && rightTapping.fatigueIndex > 0.3) {
         recommendations.push('Right hand shows significant fatigue during testing');
       }
-      
+
       // Asymmetry analysis
       if (leftTapping && rightTapping) {
         const freqDiff = Math.abs(leftTapping.averageFrequency - rightTapping.averageFrequency);
@@ -932,14 +932,14 @@ const HandMovementAssessment = () => {
           recommendations.push('Significant asymmetry in tapping frequency between hands');
         }
       }
-      
+
       if (leftTremor && rightTremor) {
         const ampDiff = Math.abs(leftTremor.amplitude - rightTremor.amplitude);
         if (ampDiff > 0.03) {
           recommendations.push('Significant asymmetry in tremor amplitude between hands');
         }
       }
-      
+
       if (recommendations.length === 0) {
         recommendations.push('Motor function appears within normal range');
         recommendations.push('No significant tremor detected');
@@ -949,10 +949,10 @@ const HandMovementAssessment = () => {
         recommendations.push('Document symptoms and monitor progression over time');
         recommendations.push('Repeat testing in 3-6 months to track changes');
       }
-      
+
       return recommendations;
     };
-    
+
     return (
       <div className="max-w-6xl mx-auto p-8 bg-white rounded-lg shadow-lg">
         <div className="text-center mb-8">
@@ -1252,8 +1252,8 @@ const HandMovementAssessment = () => {
           <div className="w-full bg-gray-200 rounded-full h-3">
             <div
               className="bg-gradient-to-r from-blue-600 to-purple-600 h-3 rounded-full transition-all duration-500"
-              style={{ 
-                width: `${((['welcome', 'tapping', 'tremor', 'results', 'finalResults'].indexOf(currentView) + 1) / 5) * 100}%` 
+              style={{
+                width: `${((['welcome', 'tapping', 'tremor', 'results', 'finalResults'].indexOf(currentView) + 1) / 5) * 100}%`
               }}
             />
           </div>
