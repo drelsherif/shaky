@@ -173,6 +173,7 @@ const HandMovementAssessment = () => {
 
   const timerRef = useRef(null);
   const motionDataRef = useRef([]); // This ref stores ALL raw motion data for analysis
+  const lastCallRef = useRef(0); // For throttling handleMotionEvent
 
   // Sensor handling (throttled)
   // Ensures handleMotionEvent is stable and its reference doesn't change unexpectedly,
@@ -180,10 +181,10 @@ const HandMovementAssessment = () => {
   const handleMotionEvent = useCallback((event) => {
     const now = Date.now();
     // Throttle to approximately 20Hz (50ms interval) to avoid overwhelming state updates
-    if (now - (handleMotionEvent.lastCall || 0) < 50) {
+    if (now - (lastCallRef.current || 0) < 50) { // Read from ref
       return;
     }
-    handleMotionEvent.lastCall = now;
+    lastCallRef.current = now; // Write to ref
 
     const accel = event.acceleration || event.accelerationIncludingGravity || { x: 0, y: 0, z: 0 };
 
@@ -309,7 +310,7 @@ const HandMovementAssessment = () => {
     const result = {
       hand,
       tapCount,
-      averageFrequency: analysis.avgFrequency,
+      averageFrequency: analysis.avgFreq,
       consistency: analysis.consistency,
       score: analysis.score,
       tapTimes: [...tapTimes], // Make a copy
