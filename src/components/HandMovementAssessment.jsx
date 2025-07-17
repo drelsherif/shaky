@@ -1,5 +1,8 @@
 
 import { Activity, Hand, BarChart3, CheckCircle, Play } from 'lucide-react';
+import React, { useState, useCallback, useEffect, useRef } from 'react'; // Add useState, useCallback, useEffect, useRef here
+
+// ... rest of your code
 
 // Data Models matching Swift structs
 const HandType = {
