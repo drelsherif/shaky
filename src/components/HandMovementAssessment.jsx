@@ -12,18 +12,23 @@ const HandType = {
 
 const ViewState = {
   WELCOME: 'welcome',
-  TAPPING_INSTRUCTIONS: 'tapping_instructions', // New: for test specific instructions
+  TAPPING_INSTRUCTIONS: 'tapping_instructions',
   TAPPING_TEST: 'tapping_test',
-  TAPPING_RESULTS: 'tapping_results', // New: for immediate tapping results
-  TREMOR_INSTRUCTIONS: 'tremor_instructions', // New: for test specific instructions
+  TAPPING_RESULTS: 'tapping_results',
+  TREMOR_INSTRUCTIONS: 'tremor_instructions',
   TREMOR_TEST: 'tremor_test',
-  TREMOR_RESULTS: 'tremor_results', // New: for immediate tremor results
+  TREMOR_RESULTS: 'tremor_results',
   FINAL_RESULTS: 'final_results'
 };
 
 // --- Tremor Analysis Component ---
 
 const TremorVisualization = ({ tremorData, tremorOffset, isActive, onStart }) => {
+  // Determine stability percentage for display
+  const lastMagnitude = tremorData.length > 0 ? tremorData[tremorData.length - 1]?.magnitude : 0;
+  // Invert magnitude for stability: higher magnitude = lower stability
+  const stabilityPercentage = Math.max(0, (1 - (lastMagnitude * 5)) * 100).toFixed(1); // Scale magnitude for better visual representation of stability
+
   return (
     <div className="flex flex-col items-center space-y-6">
       <div
@@ -129,9 +134,9 @@ const TremorVisualization = ({ tremorData, tremorOffset, isActive, onStart }) =>
               </div>
             </div>
             <div className="mt-4 pt-4 border-t text-center">
+              {/* Displaying stability percentage */}
               <div className="text-sm text-gray-600">
-                Stability: {tremorData.length > 10 ?
-                  ((1 - (tremorData[tremorData.length - 1]?.magnitude || 0)) * 100).toFixed(1) : '0.0'}%
+                Stability: {stabilityPercentage}%
               </div>
             </div>
           </div>
@@ -146,8 +151,8 @@ const TremorVisualization = ({ tremorData, tremorOffset, isActive, onStart }) =>
 const HandMovementAssessment = () => {
   const [currentView, setCurrentView] = useState(ViewState.WELCOME);
   const [currentHand, setCurrentHand] = useState(HandType.LEFT);
-  const [isTestActive, setIsTestActive] = useState(false);
-  const [isTremorTestActive, setIsTremorTestActive] = useState(false);
+  const [isTestActive, setIsTestActive] = useState(false); // For tapping test
+  const [isTremorTestActive, setIsTremorTestActive] = useState(false); // For tremor test
   const [tapCount, setTapCount] = useState(0);
   const [timeRemaining, setTimeRemaining] = useState(20);
   const [tremorTimeRemaining, setTremorTimeRemaining] = useState(10);
@@ -162,61 +167,79 @@ const HandMovementAssessment = () => {
   });
 
   const [tapTimes, setTapTimes] = useState([]);
-  const [tremorData, setTremorData] = useState([]);
+  const [tremorData, setTremorData] = useState([]); // This state is for visualization
   const [testStartTime, setTestStartTime] = useState(null);
   const [permissionGranted, setPermissionGranted] = useState(false);
 
   const timerRef = useRef(null);
-  const motionDataRef = useRef([]);
+  const motionDataRef = useRef([]); // This ref stores ALL raw motion data for analysis
 
   // Sensor handling (throttled)
+  // Ensures handleMotionEvent is stable and its reference doesn't change unexpectedly,
+  // preventing re-registration issues for event listener.
   const handleMotionEvent = useCallback((event) => {
     const now = Date.now();
-    if (now - (handleMotionEvent.lastCall || 0) < 50) return;
+    // Throttle to approximately 20Hz (50ms interval) to avoid overwhelming state updates
+    if (now - (handleMotionEvent.lastCall || 0) < 50) {
+      return;
+    }
     handleMotionEvent.lastCall = now;
 
     const accel = event.acceleration || event.accelerationIncludingGravity || { x: 0, y: 0, z: 0 };
 
     if (isTremorTestActive) {
-      const magnitude = Math.sqrt(accel.x * accel.x + accel.y * accel.y + accel.z * accel.z);
+      // Calculate magnitude (total acceleration)
+      const magnitude = Math.sqrt(
+        (accel.x * accel.x) +
+        (accel.y * accel.y) +
+        (accel.z * accel.z)
+      );
 
       const motionPoint = {
         x: accel.x,
         y: accel.y,
         z: accel.z,
-        magnitude,
+        magnitude: magnitude,
         timestamp: now
       };
 
+      // Push to ref for full data collection for analysis
       motionDataRef.current.push(motionPoint);
 
-      const scaleFactor = 150;
-      const maxOffset = 180;
+      // Update tremorOffset for real-time visual gyroscope effect
+      // Scaling factor and maxOffset ensure the dot stays within the circle
+      const scaleFactor = 150; // Adjust sensitivity of the dot movement
+      const maxOffset = 180;  // Max pixel offset from center for a 400px circle
 
       setTremorOffset({
         x: Math.max(-maxOffset, Math.min(maxOffset, accel.x * scaleFactor)),
         y: Math.max(-maxOffset, Math.min(maxOffset, accel.y * scaleFactor))
       });
 
+      // Update tremorData state for the real-time display (keep last N points)
       setTremorData(prev => {
         const newData = [...prev, motionPoint];
-        return newData.slice(-100);
+        return newData.slice(-50); // Keep only the last 50 points for display (2.5 seconds at 20Hz)
       });
     }
-  }, [isTremorTestActive]);
+  }, [isTremorTestActive]); // Re-create if isTremorTestActive changes
 
   // Permission handling
   const requestSensorPermissions = useCallback(async () => {
     try {
       let granted = false;
+      // Check if DeviceMotionEvent.requestPermission is available (iOS 13+ requirement)
       if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
         const permission = await DeviceMotionEvent.requestPermission();
         granted = permission === 'granted';
       } else {
-        granted = true; // Assume granted for non-iOS 13+ devices
+        // For non-iOS 13+ devices or browsers, assume permission is implicitly granted
+        // This means on Android/desktop, devicemotion events should fire by default
+        granted = true;
       }
       setPermissionGranted(granted);
       if (granted) {
+        // Add event listener only once after permission is granted
         window.addEventListener('devicemotion', handleMotionEvent, { passive: true });
       } else {
         console.warn('DeviceMotion permission not granted.');
@@ -225,8 +248,8 @@ const HandMovementAssessment = () => {
       return granted;
     } catch (error) {
       console.error('Permission request failed:', error);
-      setPermissionGranted(false); // Explicitly set to false on error
-      alert('Failed to request sensor permissions. Tremor analysis may not work.');
+      setPermissionGranted(false);
+      alert('Failed to request sensor permissions. Tremor analysis may not work. Ensure your device supports motion sensors.');
       return false;
     }
   }, [handleMotionEvent]);
@@ -237,9 +260,9 @@ const HandMovementAssessment = () => {
     setIsTestActive(true);
     setTimeRemaining(20);
     setTapCount(0);
-    setTapTimes([]);
+    setTapTimes([]); // Clear tap times for a new test
     setCurrentFrequency(0);
-    setTestStartTime(Date.now());
+    setTestStartTime(Date.now()); // Set start time when test actually begins
 
     timerRef.current = setInterval(() => {
       setTimeRemaining(prev => {
@@ -251,7 +274,7 @@ const HandMovementAssessment = () => {
         return newTime;
       });
     }, 100);
-  }, []);
+  }, [analyzeTappingData, tapTimes]); // Added analyzeTappingData and tapTimes to dependencies
 
   const handleTap = useCallback(() => {
     if (!isTestActive || timeRemaining <= 0) return;
@@ -260,12 +283,12 @@ const HandMovementAssessment = () => {
     setTapCount(newTapCount);
 
     if (testStartTime) {
-      const currentTime = (Date.now() - testStartTime) / 1000;
+      const currentTimeInSeconds = (Date.now() - testStartTime) / 1000;
       setTapTimes(prev => {
-        const newTapTimes = [...prev, currentTime];
-        // Only update currentFrequency if currentTime is not zero to avoid division by zero
-        if (currentTime > 0) {
-            setCurrentFrequency(newTapCount / currentTime);
+        const newTapTimes = [...prev, currentTimeInSeconds];
+        // Update frequency only if time has passed to avoid division by zero
+        if (currentTimeInSeconds > 0) {
+            setCurrentFrequency(newTapCount / currentTimeInSeconds);
         }
         return newTapTimes;
       });
@@ -280,6 +303,7 @@ const HandMovementAssessment = () => {
 
     setIsTestActive(false);
 
+    // Ensure analysis uses the final tapTimes and tapCount
     const analysis = analyzeTappingData();
 
     const result = {
@@ -288,7 +312,7 @@ const HandMovementAssessment = () => {
       averageFrequency: analysis.avgFrequency,
       consistency: analysis.consistency,
       score: analysis.score,
-      tapTimes: [...tapTimes],
+      tapTimes: [...tapTimes], // Make a copy
       peakFrequency: analysis.peakFrequency,
       fatigueIndex: analysis.fatigueIndex,
       rhythmStability: analysis.rhythmStability,
@@ -302,16 +326,17 @@ const HandMovementAssessment = () => {
       [`${hand}Tapping`]: result
     }));
 
-    setCurrentView(ViewState.TAPPING_RESULTS); // Show tapping results
-  }, [tapCount, tapTimes]);
+    setCurrentView(ViewState.TAPPING_RESULTS);
+  }, [tapCount, tapTimes, analyzeTappingData, getGrade]);
 
   // Tremor test functions
   const startTremorTest = useCallback((hand) => {
+    // Crucially reset motionDataRef.current for a new tremor test
+    motionDataRef.current = [];
+    setTremorData([]); // Clear real-time display data as well
     setIsTremorTestActive(true);
     setTremorTimeRemaining(10);
-    setTremorData([]);
-    setTremorOffset({ x: 0, y: 0 });
-    motionDataRef.current = [];
+    setTremorOffset({ x: 0, y: 0 }); // Reset visual offset
 
     timerRef.current = setInterval(() => {
       setTremorTimeRemaining(prev => {
@@ -323,7 +348,7 @@ const HandMovementAssessment = () => {
         return newTime;
       });
     }, 100);
-  }, []);
+  }, [analyzeTremorData]); // Added analyzeTremorData to dependencies
 
   const finishTremorTest = useCallback((hand) => {
     if (timerRef.current) {
@@ -331,9 +356,10 @@ const HandMovementAssessment = () => {
       timerRef.current = null;
     }
 
-    setIsTremorTestActive(false);
-    setTremorOffset({ x: 0, y: 0 });
+    setIsTremorTestActive(false); // Stop active state for tremor test
+    setTremorOffset({ x: 0, y: 0 }); // Reset visual dot to center
 
+    // Analyze data from the motionDataRef.current (all collected data points)
     const analysis = analyzeTremorData();
 
     const result = {
@@ -342,13 +368,13 @@ const HandMovementAssessment = () => {
       amplitude: analysis.amplitude,
       severity: analysis.severity,
       xAxisAmplitude: analysis.xAxisAmplitude,
-      yAxisAmplitude: analysis.yAxisAmp,
-      zAxisAmplitude: analysis.zAxisAmp,
+      yAxisAmplitude: analysis.yAxisAmplitude,
+      zAxisAmplitude: analysis.zAxisAmplitude,
       dominantAxis: analysis.dominantAxis,
       tremorsPerSecond: analysis.tremorsPerSecond,
       maxAmplitude: analysis.maxAmplitude,
       amplitudeVariability: analysis.amplitudeVariability,
-      hasTremor: analysis.amplitude > 0.02
+      hasTremor: analysis.amplitude > 0.02 // Threshold for detecting tremor
     };
 
     setSession(prev => ({
@@ -356,19 +382,20 @@ const HandMovementAssessment = () => {
       [`${hand}Tremor`]: result
     }));
 
-    setCurrentView(ViewState.TREMOR_RESULTS); // Show tremor results
-  }, []);
+    setCurrentView(ViewState.TREMOR_RESULTS);
+  }, [analyzeTremorData]);
 
   // Analysis functions
   const analyzeTappingData = useCallback(() => {
-    if (tapTimes.length === 0) {
+    if (tapTimes.length === 0 || tapCount === 0) { // Added tapCount check for robustness
       return {
         avgFrequency: 0, consistency: 0, score: 0, peakFrequency: 0,
         fatigueIndex: 0, rhythmStability: 0, accelerationPhase: 0, decelerationPhase: 0
       };
     }
 
-    const avgFreq = tapCount / 20.0;
+    const totalTestDuration = 20.0; // The fixed duration of the tapping test
+    const avgFreq = tapCount / totalTestDuration;
     const consistency = calculateConsistency();
     const peakFreq = calculatePeakFrequency();
     const fatigueIndex = calculateFatigueIndex();
@@ -397,11 +424,11 @@ const HandMovementAssessment = () => {
       accelerationPhase: parseFloat(accelPhase.toFixed(2)),
       decelerationPhase: parseFloat(decelPhase.toFixed(2))
     };
-  }, [tapCount, tapTimes]);
+  }, [tapCount, tapTimes, calculateConsistency, calculatePeakFrequency, calculateFatigueIndex, calculateRhythmStability, calculatePhases]);
 
   const analyzeTremorData = useCallback(() => {
-    const data = motionDataRef.current;
-    if (!data || data.length < 10) {
+    const data = motionDataRef.current; // Use the ref for full data
+    if (!data || data.length < 20) { // Need sufficient data points for meaningful analysis
       return {
         frequency: 0, amplitude: 0, severity: 'None', xAxisAmplitude: 0, yAxisAmplitude: 0,
         zAxisAmplitude: 0, dominantAxis: 'None', tremorsPerSecond: 0, maxAmplitude: 0, amplitudeVariability: 0
@@ -448,103 +475,74 @@ const HandMovementAssessment = () => {
       maxAmplitude: parseFloat(maxAmplitude.toFixed(4)),
       amplitudeVariability: parseFloat(amplitudeVariability.toFixed(4))
     };
-  }, []);
+  }, [calculateAmplitudeVariability, estimateFrequency]);
 
-  // Helper functions for analysis (as before)
-  const calculateConsistency = useCallback(() => { /* ... (unchanged) ... */
+
+  // Helper functions for analysis (kept as before, ensuring useCallback for performance)
+  const calculateConsistency = useCallback(() => {
     if (tapTimes.length < 2) return 0;
-
     const intervals = [];
-    for (let i = 1; i < tapTimes.length; i++) {
-      intervals.push(tapTimes[i] - tapTimes[i - 1]);
-    }
-
+    for (let i = 1; i < tapTimes.length; i++) { intervals.push(tapTimes[i] - tapTimes[i - 1]); }
     if (intervals.length === 0) return 0;
-
     const mean = intervals.reduce((sum, val) => sum + val, 0) / intervals.length;
     if (mean === 0) return 0;
-
     const variance = intervals.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / intervals.length;
     const stdDev = Math.sqrt(variance);
-
     return Math.max(0, Math.min(1, 1 - (stdDev / mean)));
   }, [tapTimes]);
 
-  const calculatePeakFrequency = useCallback(() => { /* ... (unchanged) ... */
+  const calculatePeakFrequency = useCallback(() => {
     if (tapTimes.length < 3) return 0;
-
     let maxFreq = 0;
-    const windowSize = 3.0; // 3-second sliding window
-
+    const windowSize = 3.0;
     for (let i = 0; i < tapTimes.length; i++) {
       const windowStart = tapTimes[i];
       const windowEnd = windowStart + windowSize;
-
       const tapsInWindow = tapTimes.filter(t => t >= windowStart && t <= windowEnd).length;
-      if (tapsInWindow > 1) { // Need at least 2 taps for frequency calculation
+      if (tapsInWindow > 1) {
         const freq = tapsInWindow / windowSize;
         maxFreq = Math.max(maxFreq, freq);
       }
     }
-
     return maxFreq;
   }, [tapTimes]);
 
-  const calculateFatigueIndex = useCallback(() => { /* ... (unchanged) ... */
+  const calculateFatigueIndex = useCallback(() => {
     if (tapTimes.length < 6) return 0;
-
     const thirdSize = Math.floor(tapTimes.length / 3);
     if (thirdSize < 2) return 0;
-
     const firstThird = tapTimes.slice(0, thirdSize);
     const lastThird = tapTimes.slice(-thirdSize);
-
     if (firstThird.length === 0 || lastThird.length === 0) return 0;
-
     const firstDuration = firstThird[firstThird.length - 1] - firstThird[0];
     const lastDuration = lastThird[lastThird.length - 1] - lastThird[0];
-
     if (firstDuration === 0 || lastDuration === 0) return 0;
-
-    const firstFreq = (firstThird.length - 1) / firstDuration; // -1 because intervals = taps - 1
+    const firstFreq = (firstThird.length - 1) / firstDuration;
     const lastFreq = (lastThird.length - 1) / lastDuration;
-
     if (firstFreq === 0) return 0;
-
     return Math.max(0, Math.min(1, (firstFreq - lastFreq) / firstFreq));
   }, [tapTimes]);
 
-  const calculateRhythmStability = useCallback(() => { /* ... (unchanged) ... */
+  const calculateRhythmStability = useCallback(() => {
     if (tapTimes.length < 3) return 0;
-
     const intervals = [];
-    for (let i = 1; i < tapTimes.length; i++) {
-      intervals.push(tapTimes[i] - tapTimes[i - 1]);
-    }
-
+    for (let i = 1; i < tapTimes.length; i++) { intervals.push(tapTimes[i] - tapTimes[i - 1]); }
     if (intervals.length === 0) return 0;
-
     const mean = intervals.reduce((sum, val) => sum + val, 0) / intervals.length;
     if (mean === 0) return 0;
-
     const variance = intervals.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / intervals.length;
     const stability = Math.max(0, Math.min(1, 1 - (Math.sqrt(variance) / mean)));
-
     return stability;
   }, [tapTimes]);
 
-  const calculatePhases = useCallback(() => { /* ... (unchanged) ... */
+  const calculatePhases = useCallback(() => {
     if (tapTimes.length < 5) return [0, 0];
-
     let peakIndex = 0;
     let maxLocalFreq = 0;
-
-    // Find peak frequency using sliding window
     for (let i = 2; i < tapTimes.length - 2; i++) {
       const windowStart = Math.max(0, i - 2);
       const windowEnd = Math.min(tapTimes.length - 1, i + 2);
       const localTaps = tapTimes.slice(windowStart, windowEnd + 1);
-
       if (localTaps.length > 1) {
         const duration = localTaps[localTaps.length - 1] - localTaps[0];
         if (duration > 0) {
@@ -556,44 +554,36 @@ const HandMovementAssessment = () => {
         }
       }
     }
-
     const accelerationPhase = tapTimes[peakIndex] || 0;
     const decelerationPhase = 20.0 - accelerationPhase;
-
     return [accelerationPhase, Math.max(0, decelerationPhase)];
   }, [tapTimes]);
 
-  const calculateAmplitudeVariability = useCallback((magnitudes) => { /* ... (unchanged) ... */
+  const calculateAmplitudeVariability = useCallback((magnitudes) => {
     if (magnitudes.length < 2) return 0;
-
     const mean = magnitudes.reduce((sum, val) => sum + val, 0) / magnitudes.length;
     const variance = magnitudes.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / magnitudes.length;
-
     return Math.sqrt(variance);
   }, []);
 
-  const estimateFrequency = useCallback((data) => { /* ... (unchanged) ... */
+  const estimateFrequency = useCallback((data) => {
     if (data.length < 20) return 0;
-
     const mean = data.reduce((sum, val) => sum + val, 0) / data.length;
     const centered = data.map(val => val - mean);
-
     let crossings = 0;
     for (let i = 1; i < centered.length; i++) {
       if ((centered[i - 1] > 0 && centered[i] <= 0) || (centered[i - 1] <= 0 && centered[i] > 0)) {
         crossings++;
       }
     }
-
-    const samplingRate = 20; // Hz, based on 50ms throttling
+    const samplingRate = 20; // Hz, based on 50ms throttling in handleMotionEvent
     const duration = data.length / samplingRate;
     const frequency = (crossings / 2.0) / duration;
-
     return Math.max(0, frequency);
   }, []);
 
 
-  const getGrade = (score) => { /* ... (unchanged) ... */
+  const getGrade = (score) => {
     if (score >= 70) return 'Normal';
     if (score >= 50) return 'Mild Impairment';
     if (score >= 30) return 'Moderate Impairment';
@@ -601,7 +591,7 @@ const HandMovementAssessment = () => {
     return 'Severe Impairment';
   };
 
-  const getScoreColor = (score) => { /* ... (unchanged) ... */
+  const getScoreColor = (score) => {
     if (score >= 80) return 'text-green-600';
     if (score >= 60) return 'text-blue-600';
     if (score >= 40) return 'text-yellow-600';
@@ -614,8 +604,7 @@ const HandMovementAssessment = () => {
     if (!permissionGranted) {
       const granted = await requestSensorPermissions();
       if (!granted) {
-        // If permission is denied, perhaps show a message and prevent proceeding
-        alert("Cannot proceed without sensor permissions for tremor analysis.");
+        alert("Cannot proceed without sensor permissions for tremor analysis. Please allow access in device settings.");
         return;
       }
     }
@@ -625,11 +614,7 @@ const HandMovementAssessment = () => {
 
 
   const handleProceed = useCallback(() => {
-    const leftTappingDone = session.leftTapping !== null;
-    const leftTremorDone = session.leftTremor !== null;
-    const rightTappingDone = session.rightTapping !== null;
-    const rightTremorDone = session.rightTremor !== null;
-
+    // Logic to navigate based on current view and completed tests
     if (currentView === ViewState.TAPPING_RESULTS) {
       setCurrentView(ViewState.TREMOR_INSTRUCTIONS);
     } else if (currentView === ViewState.TREMOR_RESULTS) {
@@ -644,8 +629,7 @@ const HandMovementAssessment = () => {
     } else if (currentView === ViewState.TREMOR_INSTRUCTIONS) {
         setCurrentView(ViewState.TREMOR_TEST);
     }
-  }, [currentHand, session, currentView]);
-
+  }, [currentView, currentHand]); // Removed session from dependency as it's not directly used for navigation logic here
 
   const restartTest = useCallback(() => {
     setSession({
@@ -665,18 +649,25 @@ const HandMovementAssessment = () => {
     setTremorOffset({ x: 0, y: 0 });
     setTapTimes([]);
     setTremorData([]);
-    motionDataRef.current = [];
+    motionDataRef.current = []; // Crucial to clear motion data ref on restart
   }, []);
 
   // --- Cleanup Effect ---
+  // This useEffect ensures that timers are cleared and event listeners are removed
+  // when the component unmounts or when handleMotionEvent changes.
   useEffect(() => {
+    // Clean up function
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
       }
-      window.removeEventListener('devicemotion', handleMotionEvent);
+      // Only remove if the listener was actually added
+      if (permissionGranted) { // Check if permission was granted before removing
+        window.removeEventListener('devicemotion', handleMotionEvent);
+      }
     };
-  }, [handleMotionEvent]);
+  }, [handleMotionEvent, permissionGranted]); // Add permissionGranted to dependencies
+
 
   // --- Render Functions for Each View State ---
 
@@ -946,8 +937,8 @@ const HandMovementAssessment = () => {
 
       <div className="flex justify-center mb-8">
         <TremorVisualization
-          tremorData={tremorData}
-          tremorOffset={tremorOffset}
+          tremorData={tremorData} // Pass tremorData for real-time visualization
+          tremorOffset={tremorOffset} // Pass tremorOffset for dot position
           isActive={isTremorTestActive}
           onStart={() => startTremorTest(currentHand)}
         />
@@ -1031,27 +1022,27 @@ const HandMovementAssessment = () => {
             <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
                     <span>Max Amplitude:</span>
-                    <span className="font-semibold">{tremor.maxAmplitude.toFixed(4)} g</span>
+                    <div className="font-semibold">{tremor.maxAmplitude.toFixed(4)} g</div>
                 </div>
                 <div className="flex justify-between">
                     <span>Dominant Axis:</span>
-                    <span className="font-semibold">{tremor.dominantAxis}</span>
+                    <div className="font-semibold">{tremor.dominantAxis}</div>
                 </div>
                 <div className="flex justify-between">
                     <span>X-Axis Amplitude:</span>
-                    <span className="font-semibold">{tremor.xAxisAmplitude.toFixed(4)} g</span>
+                    <div className="font-semibold">{tremor.xAxisAmplitude.toFixed(4)} g</div>
                 </div>
                 <div className="flex justify-between">
                     <span>Y-Axis Amplitude:</span>
-                    <span className="font-semibold">{tremor.yAxisAmplitude.toFixed(4)} g</span>
+                    <div className="font-semibold">{tremor.yAxisAmplitude.toFixed(4)} g</div>
                 </div>
                 <div className="flex justify-between">
                     <span>Z-Axis Amplitude:</span>
-                    <span className="font-semibold">{tremor.zAxisAmplitude.toFixed(4)} g</span>
+                    <div className="font-semibold">{tremor.zAxisAmplitude.toFixed(4)} g</div>
                 </div>
                 <div className="flex justify-between">
                     <span>Amplitude Variability:</span>
-                    <span className="font-semibold">{tremor.amplitudeVariability.toFixed(4)} g</span>
+                    <div className="font-semibold">{tremor.amplitudeVariability.toFixed(4)} g</div>
                 </div>
             </div>
           </div>
@@ -1345,20 +1336,47 @@ const HandMovementAssessment = () => {
   const currentViewIndex = (() => {
     switch (currentView) {
       case ViewState.WELCOME: return 1;
-      case ViewState.TAPPING_INSTRUCTIONS:
-      case ViewState.TAPPING_TEST:
-      case ViewState.TAPPING_RESULTS:
-        return currentHand === HandType.LEFT ? 2 : 4;
-      case ViewState.TREMOR_INSTRUCTIONS:
-      case ViewState.TREMOR_TEST:
-      case ViewState.TREMOR_RESULTS:
-        return currentHand === HandType.LEFT ? 3 : 5;
-      case ViewState.FINAL_RESULTS: return 6;
+      case ViewState.TAPPING_INSTRUCTIONS: return 2;
+      case ViewState.TAPPING_TEST: return 2;
+      case ViewState.TAPPING_RESULTS: return 2; // Tapping test is step 2 for either hand
+      case ViewState.TREMOR_INSTRUCTIONS: return 3;
+      case ViewState.TREMOR_TEST: return 3;
+      case ViewState.TREMOR_RESULTS: return 3; // Tremor test is step 3 for either hand
+      case ViewState.FINAL_RESULTS: return 4; // Final results is step 4
       default: return 1;
     }
   })();
 
-  const totalViews = 6; // Welcome, Left Tap, Left Tremor, Right Tap, Right Tremor, Final Results
+  const totalViews = 4; // Welcome, Left Hand Tests, Right Hand Tests, Final Results
+                        // For progress bar: Welcome (1), Left Hand tests (2), Right Hand tests (3), Final Results (4)
+                        // Simplified for progress bar to reflect overall stages
+
+  // Adjust progress bar logic to reflect major stages, not every sub-view
+  const getProgressBarWidth = () => {
+      let progress = 0;
+      switch(currentView) {
+          case ViewState.WELCOME:
+              progress = 0; // Starts from 0
+              break;
+          case ViewState.TAPPING_INSTRUCTIONS:
+          case ViewState.TAPPING_TEST:
+          case ViewState.TAPPING_RESULTS:
+              progress = currentHand === HandType.LEFT ? 25 : 50; // 25% for Left Tap, 50% for Right Tap
+              break;
+          case ViewState.TREMOR_INSTRUCTIONS:
+          case ViewState.TREMOR_TEST:
+          case ViewState.TREMOR_RESULTS:
+              progress = currentHand === HandType.LEFT ? 50 : 75; // 50% for Left Tremor, 75% for Right Tremor
+              break;
+          case ViewState.FINAL_RESULTS:
+              progress = 100;
+              break;
+          default:
+              progress = 0;
+      }
+      return progress;
+  };
+
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 py-4 px-4 font-sans text-gray-800">
@@ -1368,14 +1386,20 @@ const HandMovementAssessment = () => {
           <div className="flex justify-between items-center mb-2">
             <span className="text-lg font-medium text-gray-700">Assessment Progress</span>
             <span className="text-lg font-medium text-gray-700">
-              Step {currentViewIndex} of {totalViews}
+              {/* Simplified step count for overall progress */}
+              Step {
+                currentView === ViewState.WELCOME ? 1 :
+                (currentHand === HandType.LEFT && (currentView === ViewState.TAPPING_INSTRUCTIONS || currentView === ViewState.TAPPING_TEST || currentView === ViewState.TAPPING_RESULTS || currentView === ViewState.TREMOR_INSTRUCTIONS || currentView === ViewState.TREMOR_TEST || currentView === ViewState.TREMOR_RESULTS)) ? 2 :
+                (currentHand === HandType.RIGHT && (currentView === ViewState.TAPPING_INSTRUCTIONS || currentView === ViewState.TAPPING_TEST || currentView === ViewState.TAPPING_RESULTS || currentView === ViewState.TREMOR_INSTRUCTIONS || currentView === ViewState.TREMOR_TEST || currentView === ViewState.TREMOR_RESULTS)) ? 3 :
+                4 // Final Results
+              } of 4
             </span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-3">
             <div
               className="bg-gradient-to-r from-blue-600 to-purple-600 h-3 rounded-full transition-all duration-500"
               style={{
-                width: `${(currentViewIndex / totalViews) * 100}%`
+                width: `${getProgressBarWidth()}%`
               }}
             />
           </div>
