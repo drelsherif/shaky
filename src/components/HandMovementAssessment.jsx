@@ -310,7 +310,7 @@ const HandMovementAssessment = () => {
     const result = {
       hand,
       tapCount,
-      averageFrequency: analysis.avgFreq,
+      averageFrequency: analysis.avgFrequency,
       consistency: analysis.consistency,
       score: analysis.score,
       tapTimes: [...tapTimes], // Make a copy
@@ -532,8 +532,8 @@ const HandMovementAssessment = () => {
     const mean = intervals.reduce((sum, val) => sum + val, 0) / intervals.length;
     if (mean === 0) return 0;
     const variance = intervals.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / intervals.length;
-    const stability = Math.max(0, Math.min(1, 1 - (Math.sqrt(variance) / mean)));
-    return stability;
+    const stdDev = Math.sqrt(variance);
+    return Math.max(0, Math.min(1, 1 - (stdDev / mean)));
   }, [tapTimes]);
 
   const calculatePhases = useCallback(() => {
@@ -651,6 +651,7 @@ const HandMovementAssessment = () => {
     setTapTimes([]);
     setTremorData([]);
     motionDataRef.current = []; // Crucial to clear motion data ref on restart
+    lastCallRef.current = 0; // Reset lastCallRef on restart as well
   }, []);
 
   // --- Cleanup Effect ---
